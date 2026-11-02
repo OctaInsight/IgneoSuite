@@ -23,4 +23,5 @@ def test_pages():
     at.button[0].click().run(); assert not at.exception and "est" in at.session_state
     at.sidebar.radio[0].set_value("5 · Clusters").run(); assert not at.exception
     at.button[1].click().run(); assert not at.exception and "clu" in at.session_state
+    at.sidebar.radio[0].set_value("6 · Submit to database").run(); assert not at.exception
     at.sidebar.radio[0].set_value("About").run(); assert not at.exception

@@ -13,6 +13,25 @@ def _data():
     return clean_table(raw, i, v), i, v
 
 
+def test_meta_and_submission_rows():
+    from igneosuite.io import guess_meta, read_meta
+    from igneosuite.submit import sample_rows
+    raw = demo()
+    g = guess_meta(raw)
+    assert g == {"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)"}
+    meta, bad = read_meta(raw, g)
+    assert bad["latitude"] == 1 and np.isnan(meta.latitude.iloc[2])
+    i, v = guess_columns(raw)
+    assert "Latitude" not in v and "Age (Ma)" not in v
+    X, ids, _ = clean_table(raw, i, v)
+    M = X.values; est = impute(M, "KNN"); E = np.where(np.isnan(M), 0.1 * est, np.nan)
+    rows = sample_rows("d", ids, list(X.columns), M, meta, est, E)
+    r = rows[0]
+    assert r["row_number"] == 1 and r["sample_id"] == "S0000" and r["age_ma"] == meta.age_ma.iloc[0]
+    assert set(r["measured"]).isdisjoint(r["estimated"]) and set(r["estimated"]) == set(r["estimate_error"])
+    assert len(r["measured"]) + len(r["estimated"]) == len(X.columns)
+
+
 def test_reading():
     (X, ids, rep), i, v = _data()
     assert i == "Sample" and len(v) == 22

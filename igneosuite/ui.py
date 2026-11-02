@@ -5,14 +5,16 @@ import pandas as pd
 import streamlit as st
 
 from . import __version__
-from .io import read_table, clean_table, guess_columns, REE, short_name
+from .io import read_table, clean_table, guess_columns, guess_meta, read_meta, REE, short_name
+from . import submit as submit_mod
 from . import diagnose, validate, errors, export, cluster, plots, telemetry
 import time
 from .imputers import METHODS, available_methods, impute, DEEP, HAS_TORCH
 
 APP_META = dict(id="igneosuite", name="IgneoSuite", tagline="Gap-filling for incomplete igneous geochemistry",
                 version=__version__)
-STEPS = ["1 · Load data", "2 · Missing values", "3 · Test methods", "4 · Fill and export", "5 · Clusters", "About"]
+STEPS = ["1 · Load data", "2 · Missing values", "3 · Test methods", "4 · Fill and export", "5 · Clusters",
+         "6 · Submit to database", "About"]
 S = st.session_state
 
 
@@ -60,12 +62,26 @@ def page_load():
     id_guess, val_guess = guess_columns(raw)
     cols = list(raw.columns)
     id_col = st.selectbox("Sample-ID column", cols, index=cols.index(S.get("id_col", id_guess)))
-    choices = [c for c in cols if c != id_col]
+    st.markdown("**Location and age** (optional; kept with each sample, never used in calculations)")
+    mg = S.get("meta_cols", guess_meta(raw))
+    opts = ["(none)"] + [c for c in cols if c != id_col]
+    mc = st.columns(3)
+    labels = {"latitude": "Latitude (decimal °, N positive)", "longitude": "Longitude (decimal °, E positive)",
+              "age_ma": "Age (Ma)"}
+    meta_cols = {}
+    for box, key in zip(mc, labels):
+        cur = mg.get(key) if mg.get(key) in opts else "(none)"
+        v = box.selectbox(labels[key], opts, index=opts.index(cur), key="meta_" + key)
+        meta_cols[key] = None if v == "(none)" else v
+    taken = {id_col, *[v for v in meta_cols.values() if v]}
+    choices = [c for c in cols if c not in taken]
     default = [c for c in S.get("value_cols", val_guess) if c in choices]
     value_cols = st.multiselect("Variables (concentrations)", choices, default=default)
     if st.button("Read values", type="primary", disabled=not value_cols):
         X, ids, rep = clean_table(raw, id_col, value_cols)
-        S.update(X=X, ids=ids, report=rep, id_col=id_col, value_cols=value_cols)
+        meta, bad = read_meta(raw, meta_cols)
+        rep["meta_out_of_range"] = {k: v for k, v in bad.items() if v}
+        S.update(X=X, ids=ids, report=rep, id_col=id_col, value_cols=value_cols, meta=meta, meta_cols=meta_cols)
         sm = diagnose.summary(X)
         telemetry.event("load", dict(n_samples=sm["n_samples"], n_variables=sm["n_variables"],
                                      pct_missing=round(sm["pct_missing"], 2), n_complete=sm["n_complete"],
@@ -83,10 +99,17 @@ def page_load():
         if rep["text_examples"]:
             st.warning("Some cells could not be read as numbers and were set to missing: " +
                        "; ".join(f"{k}: {', '.join(v[:4])}" for k, v in rep["text_examples"].items()))
+        if rep.get("meta_out_of_range"):
+            st.warning("Location or age values outside the valid range were set to missing: " +
+                       ", ".join(f"{k} ({v})" for k, v in rep["meta_out_of_range"].items()))
+        if "meta" in S:
+            have = {k: int(S.meta[k].notna().sum()) for k in S.meta.columns}
+            st.caption(f"Samples with latitude: {have['latitude']}, longitude: {have['longitude']}, age: {have['age_ma']}")
         if rep["nonpositive"]:
             st.warning("Zero or negative values found in " + ", ".join(rep["nonpositive"]) +
                        ". These variables are treated on a linear scale instead of a log scale.")
-        st.dataframe(pd.concat([pd.Series(S.ids, name=S.id_col), S.X], axis=1).head(200), width='stretch')
+        st.dataframe(pd.concat([pd.Series(S.ids, name=S.id_col), S.get("meta", pd.DataFrame(index=S.X.index)), S.X],
+                               axis=1).head(200), width='stretch')
 
 
 # ---------------------------------------------------------------- 2 diagnose
@@ -306,6 +329,65 @@ def page_cluster():
         st.download_button("Download cluster labels (CSV)", out.to_csv(index=False).encode(), "igneosuite_clusters.csv", "text/csv")
 
 
+def page_submit():
+    _need("X", "Load data first (step 1).")
+    st.header("Submit your data to the IgneoSuite database")
+    st.write("Share your analyses with the IgneoSuite compilation. Each sample is stored with its ID, location, "
+             "age and measured values. If you filled the gaps in step 4, the estimates and their errors are "
+             "stored too, kept separate from the measured values. Submissions are reviewed by Octa Insight "
+             "before they are used.")
+    if not telemetry.enabled():
+        st.info("The database connection is not set up for this installation.")
+        return
+    X = S.X; M = X.values.astype(float); cols = list(X.columns)
+    meta = S.get("meta", pd.DataFrame({"latitude": np.nan, "longitude": np.nan, "age_ma": np.nan}, index=X.index))
+    c = st.columns(4)
+    c[0].metric("Samples", len(X)); c[1].metric("Variables", len(cols))
+    c[2].metric("With location", int((meta.latitude.notna() & meta.longitude.notna()).sum()))
+    c[3].metric("With age", int(meta.age_ma.notna().sum()))
+    if meta.latitude.isna().all() or meta.age_ma.isna().all():
+        st.warning("Location or age is missing for every sample. You can still submit, but data with location "
+                   "and age are far more useful. Choose those columns in step 1 if your table has them.")
+    if "submitted_id" in S:
+        st.success(f"Submitted. Reference number: {S.submitted_id}. Keep it if you need to contact us about this dataset.")
+    with st.form("submit_form"):
+        a, b = st.columns(2)
+        name = a.text_input("Author name *")
+        email = b.text_input("Email *")
+        aff = a.text_input("Affiliation")
+        title = b.text_input("Dataset title *")
+        ref = st.text_input("Publication or DOI the data come from")
+        desc = st.text_area("Short description (area, rock types, analytical methods)", max_chars=4000)
+        lic = st.selectbox("Licence", list(submit_mod.LICENCES), format_func=lambda k: submit_mod.LICENCES[k])
+        inc = False
+        if "est" in S:
+            inc = st.checkbox(f"Include the {S.fill_method} estimates and their errors from step 4", value=True)
+        consent = st.checkbox("I have the right to share these data, and I agree that Octa Insight stores them and "
+                              "uses them under the licence chosen above. *")
+        go = st.form_submit_button("Submit", type="primary")
+    if go:
+        problems = [m for ok, m in [(len(name.strip()) >= 2, "author name"), ("@" in email, "a valid email"),
+                                    (len(title.strip()) >= 3, "dataset title"), (consent, "your consent")] if not ok]
+        if problems:
+            st.error("Please add " + ", ".join(problems) + ".")
+            return
+        bar = st.progress(0.0, "Sending dataset")
+        try:
+            did = submit_mod.submit(dict(author_name=name, author_email=email, affiliation=aff, title=title,
+                                         reference=ref, description=desc, licence=lic, consent=consent),
+                                    S.ids, cols, M, meta,
+                                    est=S.est if inc else None, E=S.E if inc else None,
+                                    method=S.get("fill_method"), band=S.get("q"), user=_user(),
+                                    progress=lambda p, t: bar.progress(p, "Sending samples: " + t))
+        except Exception as e:
+            bar.empty()
+            st.error(f"Submission failed. {e}")
+            return
+        bar.empty()
+        S.submitted_id = did
+        st.rerun()
+
+
 def page_about():
     st.header("About IgneoSuite")
     st.markdown(f"""
@@ -322,9 +404,9 @@ Model-based methods work on log10-transformed, standardised values.
 **Reference.** Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M.
 When simpler wins: recovering the structure of incomplete geochemical data. *Computers & Geosciences* (submitted).
 
-**Privacy.** Uploaded data stay in this session and are never stored. To improve the software, IgneoSuite
-records anonymous usage statistics: table size, share missing, methods tested and their error scores.
-No data values or sample IDs are sent.
+**Privacy.** Your data are stored only if you submit them in step 6, with your consent and under the licence
+you choose. Otherwise they stay in this session. To improve the software, IgneoSuite records anonymous usage
+statistics (table size, share missing, methods tested and their error scores), never data values or sample IDs.
 """)
     if telemetry.enabled():
         with st.form("feedback", clear_on_submit=True):
@@ -337,7 +419,7 @@ No data values or sample IDs are sent.
                 st.success("Thank you, your feedback was sent.") if ok else st.error("Sending failed. Please try again later.")
 
 
-PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, page_cluster, page_about]))
+PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, page_cluster, page_submit, page_about]))
 
 
 def render(user=None):

@@ -64,13 +64,46 @@ def clean_table(raw: pd.DataFrame, id_col: str, value_cols: list[str]):
     return out, ids, report
 
 
+META_NAMES = {
+    "latitude": {"lat", "latitude", "lat (°)", "lat (deg)", "latitude (°)", "latitude (deg)", "y"},
+    "longitude": {"lon", "long", "lng", "longitude", "lon (°)", "long (°)", "longitude (°)", "longitude (deg)", "x"},
+    "age_ma": {"age", "age (ma)", "age ma", "age_ma", "age(ma)", "age [ma]", "ma"},
+}
+
+
+def guess_meta(raw: pd.DataFrame) -> dict:
+    """Guess latitude, longitude and age columns from their names (None if not found)."""
+    out = {}
+    for key, names in META_NAMES.items():
+        out[key] = next((c for c in raw.columns if str(c).strip().lower() in names), None)
+    return out
+
+
+def read_meta(raw: pd.DataFrame, cols: dict) -> tuple[pd.DataFrame, dict]:
+    """Numeric latitude, longitude and age (Ma); values outside valid ranges become missing."""
+    limits = {"latitude": (-90, 90), "longitude": (-180, 180), "age_ma": (0, 4600)}
+    meta, bad = pd.DataFrame(index=raw.index), {}
+    for key, col in cols.items():
+        if not col:
+            meta[key] = np.nan
+            continue
+        v = np.array([_to_number(x)[0] for x in raw[col]], dtype=float)
+        lo, hi = limits[key]
+        out = (v < lo) | (v > hi)
+        bad[key] = int(out.sum())
+        v[out] = np.nan
+        meta[key] = v
+    return meta, bad
+
+
 def guess_columns(raw: pd.DataFrame):
     """Guess the ID column and the numeric value columns."""
     cols = list(raw.columns)
     id_guess = next((c for c in cols if str(c).strip().lower() in {"id", "sample", "sample id", "sample_id", "name"}), cols[0])
     value_guess = []
+    meta = {c for c in guess_meta(raw).values() if c}
     for c in cols:
-        if c == id_guess:
+        if c == id_guess or c in meta:
             continue
         nums = sum(_to_number(v)[1] in ("number", "recovered") for v in raw[c])
         if nums >= 0.2 * max(len(raw), 1):

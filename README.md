@@ -10,8 +10,8 @@ works best, and gives every estimated value its own error. It implements the wor
 
 ## What it does
 
-1. **Load data** – CSV or Excel, one sample per row. Pick the sample-ID column (never used in calculations)
-   and the variables. Blank cells and placeholders (`n.d.`, `b.d.l.`, `-`, `<0.5`) become missing values;
+1. **Load data** – CSV or Excel, one sample per row. Pick the sample-ID column, optional latitude,
+   longitude and age (Ma) columns (none of these are used in calculations), and the variables. Blank cells and placeholders (`n.d.`, `b.d.l.`, `-`, `<0.5`) become missing values;
    numbers broken by hidden spaces are recovered and counted.
 2. **Missing values** – share missing per variable, the missingness pattern, co-missingness (φ) between
    variables, and whether element groups such as the REE are reported all-or-nothing.
@@ -24,6 +24,8 @@ works best, and gives every estimated value its own error. It implements the wor
    Measured values are never changed.
 5. **Clusters** – optional K-means comparison between a small set of measured variables and the
    gap-filled data (share of samples kept, ARI, cross-table, PCA plots).
+6. **Submit to database** – authors can share their dataset (with location and age) with the
+   IgneoSuite compilation.
 
 Model-based methods work on log10-transformed, standardised values (linear scale for any variable with
 zero or negative values).
@@ -34,6 +36,22 @@ zero or negative values).
 pip install -r requirements.txt     # drop the torch line to skip DAE and GAIN
 streamlit run app.py
 ```
+
+## Author submissions (Supabase)
+
+Step 6 lets authors submit their dataset to the IgneoSuite database in the Octa Insight Supabase project
+(`Octa_projects`), with their name, email, affiliation, title, reference, licence and consent.
+
+* `IgneoSuite_datasets` – one row per submission (metadata, licence, consent, review status
+  `submitted` / `approved` / `rejected`).
+* `IgneoSuite_samples` – one row per sample: author's sample ID, `latitude` and `longitude`
+  (decimal degrees, WGS84), `age_ma` (Ma), and `measured`, `estimated`, `estimate_error`
+  (variable → value). Estimates are stored only if the author filled the gaps in step 4.
+* `IgneoSuite_values` – view of the samples in long format (one row per sample and variable).
+
+Latitude, longitude and age columns are chosen in step 1 and never used in calculations. Values outside
+±90°, ±180° or 0–4,600 Ma are set to missing. Visitors can only add rows; samples can be added only to a
+dataset submitted in the last two hours; nobody can read submissions through the public key.
 
 ## Usage records (Supabase)
 
@@ -74,6 +92,7 @@ igneosuite/export.py   Excel and CSV output
 igneosuite/cluster.py  optional K-means comparison
 igneosuite/plots.py    figures (paper colours, no text below 7 pt)
 igneosuite/telemetry.py anonymous usage records and feedback (Supabase)
+igneosuite/submit.py   author submissions (Supabase)
 igneosuite/ui.py       interface; render(user=None) for the future portal
 supabase/migrations/   SQL for the IgneoSuite_ tables
 portal/README.md       plan for the Octa Insight portal (Supabase)

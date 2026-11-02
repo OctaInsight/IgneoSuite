@@ -20,12 +20,15 @@ def demo(n=300, seed=1):
     for k, e in enumerate(REE):
         d[e] = la * np.exp(-0.18 * k * slope) * (0.5 if e == "Eu" else 1) * np.exp(rng.normal(0, .08, n))
     df = pd.DataFrame(d)
-    vals = df.columns[1:]
+    df.insert(1, "Latitude", rng.uniform(20, 30, n).round(4))
+    df.insert(2, "Longitude", rng.uniform(32, 40, n).round(4))
+    df.insert(3, "Age (Ma)", rng.uniform(550, 850, n).round(0))
+    vals = df.columns[4:]
     m = rng.random((n, len(vals))) < 0.08
     df[vals] = df[vals].mask(m)
     df.loc[rng.random(n) < 0.35, REE] = np.nan
     df = df.astype(object)
-    df.iloc[3, 2] = "n.d."; df.iloc[5, 7] = "1 234"; df.iloc[8, 6] = "<0.5"
+    df.iloc[3, 5] = "n.d."; df.iloc[5, 10] = "1\u00a0234"; df.iloc[8, 9] = "<0.5"; df.iloc[2, 1] = 95
     return df
 
 
