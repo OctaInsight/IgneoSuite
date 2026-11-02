@@ -48,8 +48,8 @@ zero or negative values).
 
 Every chart is interactive: hover to read values (sample number, cluster, coordinates, errors), zoom and
 pan. Under each chart, **Figure (PNG, 300 dpi)** downloads a publication-quality version and **Data (CSV)**
-the numbers behind it. Step 6 adds a rotatable 3-D view of the clusters on PC1–PC3, with a slider-based
-version for browsers without 3-D graphics.
+the numbers behind it. Step 6 adds a rotatable 3-D view of the clusters on PC1–PC3. No chart needs WebGL, so
+everything shows in browsers where 3-D graphics are switched off.
 
 ## Run locally
 

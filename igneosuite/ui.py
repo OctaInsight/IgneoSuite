@@ -694,16 +694,18 @@ def page_cluster():
             st.markdown("#### 3-D view (PC1–PC2–PC3)")
             which = st.radio("Colour by", ["Gap-filled clusters", "Reference clusters"], horizontal=True, key="clu3d_which")
             lab, oth, oname = (lf, lr, "Reference") if which == "Gap-filled clusters" else (lr, lf, "Gap-filled")
-            iplots.show(iplots.clusters_3d(P, ev, lab, ids_c, oth, oname, which), f"{which} 3D", "fig_clu_3d",
-                        data=coords, png=("clusters_3d", (P, ev, lab, which), {}),
-                        caption="Drag to rotate, scroll to zoom, right-drag to move. Click a cluster in the legend to "
-                                "hide or show it; double-click to show only that cluster. Hover to see the sample.")
-            with st.expander("3-D view not showing? Use this version (rotate with the sliders)"):
-                s1, s2 = st.columns(2)
-                az = s1.slider("Turn (azimuth, °)", -180, 180, -60, 5, key="clu_az")
-                el = s2.slider("Tilt (elevation, °)", -90, 90, 25, 5, key="clu_el")
-                iplots.show(iplots.clusters_3d_projected(P, ev, lab, ids_c, az, el, which), f"{which} 3D projected",
-                            "fig_clu_3dp", png=("clusters_3d", (P, ev, lab, which), {"azim": az, "elev": el}))
+            from . import viewer3d
+            viewer3d.show(P[:, :3], ev, lab, ids_c, [f"{which}: C{a} · {oname}: C{b}" for a, b in zip(lab, oth)],
+                          which, plots.CAT, file_name=iplots._slug(f"{which} 3D"))
+            c1, c2, _ = st.columns([1, 1, 2])
+            try:
+                c1.download_button("⬇ Figure (PNG, 300 dpi)",
+                                   iplots._png("clusters_3d", (P, ev, lab, which), ()),
+                                   iplots._slug(f"{which} 3D") + ".png", "image/png", key="fig_clu_3d_png")
+            except Exception:
+                pass
+            c2.download_button("⬇ Data (CSV)", coords.to_csv().encode(), iplots._slug(f"{which} 3D") + ".csv",
+                               "text/csv", key="fig_clu_3d_csv")
         else:
             st.info("The 3-D view needs at least three reference variables and a fresh run of the comparison.")
         out = pd.DataFrame({S.id_col: np.asarray(S.ids)[c["rows"]], "Reference cluster": c["lr"], "Gap-filled cluster": c["lf"]})
@@ -822,18 +824,16 @@ def page_save():
                            format_func=lambda k: submit_mod.LICENCES[k])
         share = st.checkbox("Share this dataset with the IgneoSuite compilation (reviewed by Octa Insight first)",
                             value=bool(pm.get("shared", False)))
-        consent = st.checkbox("I have the right to store these data, and I agree that Octa Insight keeps them in the "
-                              "IgneoSuite database under the licence chosen above. *", value=bool(pm.get("consent")))
         go = st.form_submit_button("Save everything", type="primary")
     if go:
-        if len(title.strip()) < 3 or not consent:
-            st.error("Please give the dataset a name (at least 3 characters) and tick the consent box.")
+        if len(title.strip()) < 3:
+            st.error("Please give the dataset a name (at least 3 characters).")
         elif share and S.get("location_check") == "some_wrong":
             st.error("You said some sample locations are wrong. Correct them before sharing the dataset.")
         else:
             S.project_meta = dict(title=title.strip(), reference=ref.strip() or None, description=desc.strip() or None,
                                   author_name=name.strip() or None, author_email=email.strip() or None,
-                                  affiliation=aff.strip() or None, licence=lic, shared=share, consent=True)
+                                  affiliation=aff.strip() or None, licence=lic, shared=share)
             do_save(["load", "missing", "test", "fill", "geometry", "clusters"], meta_changed=True)
     project_info()
 
@@ -977,14 +977,12 @@ def save_bar(step):
             a, b = st.columns(2)
             title = a.text_input("Dataset name *", key=f"t_{step}")
             ref = b.text_input("DOI or reference of the compilation", key=f"r_{step}")
-            consent = st.checkbox("I have the right to store these data, and I agree that Octa Insight keeps them in "
-                                  "the IgneoSuite database. *", key=f"c_{step}")
             go = st.form_submit_button(f"Save {STEP_LABEL[step]}", type="primary")
         if go:
-            if len(title.strip()) < 3 or not consent:
-                st.error("Please give the dataset a name (at least 3 characters) and tick the consent box.")
+            if len(title.strip()) < 3:
+                st.error("Please give the dataset a name (at least 3 characters).")
                 return
-            S.project_meta = dict(title=title.strip(), reference=ref.strip() or None, consent=True, licence="CC-BY-4.0")
+            S.project_meta = dict(title=title.strip(), reference=ref.strip() or None, licence="CC-BY-4.0")
             if do_save(["load", step] if step != "load" else ["load"]):
                 st.rerun()
         return
@@ -1056,7 +1054,7 @@ def restore(p, out):
         S.location_comment = d["location_comment"]
     S.project = p
     S.project_meta = {k: d.get(k) for k in ("title", "reference", "description", "author_name", "author_email",
-                                            "affiliation", "licence", "shared", "consent")}
+                                            "affiliation", "licence", "shared")}
     now = time.time()
     saved = {"load": now, "samples": now}
     if "missing" in steps:
@@ -1123,7 +1121,7 @@ Model-based methods work on log10-transformed, standardised values.
 **Reference.** Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M.
 When simpler wins: recovering the structure of incomplete geochemical data. *Computers & Geosciences* (submitted).
 
-**Privacy.** Your data are stored only when you press a Save button, with your consent and under the licence you
+**Privacy.** Your data are stored only when you press a Save button, under the licence you
 choose. Saved projects are private: they can be opened only with their project code (and, later, by their owner
 after signing in). Unsaved work stays in this browser session. To improve the software, IgneoSuite records anonymous usage
 statistics (table size, share missing, methods tested and their error scores), never data values or sample IDs.

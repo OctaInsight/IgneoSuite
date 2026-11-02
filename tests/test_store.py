@@ -81,7 +81,7 @@ def test_save_and_reopen(tmp_path):
         if "val_block" in at.session_state: break
     assert not at.exception
     # first save from step 3 creates the project
-    at.text_input(key="t_test").set_value("Demo project"); at.checkbox(key="c_test").check()
+    at.text_input(key="t_test").set_value("Demo project")
     at.button[-1].click().run()
     assert not at.exception, at.exception
     pid = at.session_state["project"]["id"]
