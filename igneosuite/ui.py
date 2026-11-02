@@ -48,14 +48,24 @@ def _save_loc_answer(key):
 
 
 @st.cache_data
-def _world():
+def _world_lines():
+    """Country outlines as one x/y line (None between rings), from the bundled Natural Earth file."""
     import json
     from pathlib import Path
-    return json.loads((Path(__file__).parent / "data" / "world_countries.geojson").read_text())
+    g = json.loads((Path(__file__).parent / "data" / "world_countries.geojson").read_text())
+    xs, ys = [], []
+    for f in g["features"]:
+        geom = f["geometry"]
+        polys = geom["coordinates"] if geom["type"] == "MultiPolygon" else [geom["coordinates"]]
+        for poly in polys:
+            for ring in poly:
+                xs += [p[0] for p in ring] + [None]
+                ys += [p[1] for p in ring] + [None]
+    return xs, ys
 
 
 def location_map(key: str):
-    """Interactive map of the samples with a question on whether the locations are correct."""
+    """Interactive map of the samples, drawn without WebGL or online tiles so it shows in every browser."""
     import plotly.graph_objects as go
     from .location import map_view
     m = S.meta
@@ -63,32 +73,36 @@ def location_map(key: str):
     d = pd.DataFrame({"sample": ids, "lat": m.latitude.values, "lon": m.longitude.values,
                       "age": [("%.0f Ma" % a) if np.isfinite(a) else "no age" for a in m.age_ma.values]})
     has_age = m.age_ma.notna().values
+    xs, ys = _world_lines()
     fig = go.Figure()
+    fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", fill="toself", fillcolor="#f2efe8",
+                             line=dict(color="#8a8882", width=0.7), hoverinfo="skip", showlegend=False))
     for sel, name, colour in ((~has_age, "Without age", plots.CAT[1]), (has_age, "With age", plots.CAT[0])):
         if sel.any():
-            fig.add_trace(go.Scattermap(
-                lat=d.lat[sel], lon=d.lon[sel], mode="markers", name=f"{name} ({int(sel.sum())})",
-                marker=dict(size=6, color=colour, opacity=0.85),
+            fig.add_trace(go.Scatter(
+                x=d.lon[sel], y=d.lat[sel], mode="markers", name=f"{name} ({int(sel.sum())})",
+                marker=dict(size=6, color=colour, opacity=0.85, line=dict(width=0.4, color="#0b0b0b")),
                 customdata=d[["sample", "age"]][sel].values,
-                hovertemplate="<b>%{customdata[0]}</b><br>%{lat:.4f}, %{lon:.4f}<br>%{customdata[1]}<extra></extra>"))
+                hovertemplate="<b>%{customdata[0]}</b><br>%{y:.4f}, %{x:.4f}<br>%{customdata[1]}<extra></extra>"))
     v = map_view(d.lat.values, d.lon.values)
-    layers = [
-        # online street-map tiles (shown when they can be loaded)
-        dict(sourcetype="raster", below="traces", sourceattribution="© OpenStreetMap contributors © CARTO",
-             source=["https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
-                     "https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"]),
-        # bundled country outlines (always shown, also without internet access to tile servers)
-        dict(sourcetype="geojson", source=_world(), type="fill", color="#e9e7e1", opacity=0.35, below="traces"),
-        dict(sourcetype="geojson", source=_world(), type="line", color="#8a8882", line=dict(width=0.7), below="traces"),
-    ]
-    fig.update_layout(map=dict(style="white-bg", layers=layers,
-                               center=dict(lat=v["latitude"], lon=v["longitude"]), zoom=v["zoom"]),
-                      margin=dict(l=0, r=0, t=0, b=0), height=480,
-                      legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)", font=dict(size=12)))
-    st.plotly_chart(fig, width='stretch', key=key + "_map",
+    lat0 = v["latitude"]
+    half_lon = 360 / 2 ** (v["zoom"] + 1.2)
+    half_lat = half_lon * 0.55
+    xr = [max(-180, v["longitude"] - half_lon), min(180, v["longitude"] + half_lon)]
+    yr = [max(-90, lat0 - half_lat), min(90, lat0 + half_lat)]
+    axis = dict(showgrid=True, gridcolor="#c9d9ea", zeroline=False, ticksuffix="°", color="#52514e",
+                tickfont=dict(size=11), mirror=True, showline=True, linecolor="#8a8882")
+    fig.update_layout(
+        height=480, margin=dict(l=45, r=10, t=10, b=35), plot_bgcolor="#d7e6f5", paper_bgcolor="#ffffff",
+        dragmode="pan", hovermode="closest", uirevision=key,
+        xaxis=dict(range=xr, title=None, **axis),
+        yaxis=dict(range=yr, title=None, scaleanchor="x", scaleratio=float(1 / np.cos(np.radians(lat0))), **axis),
+        legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.9)", bordercolor="#8a8882", borderwidth=0.5,
+                    font=dict(size=12)))
+    st.plotly_chart(fig, width='stretch', key=key + "_map", theme=None,
                     config={"scrollZoom": True, "displaylogo": False, "displayModeBar": True,
-                            "modeBarButtonsToRemove": ["select2d", "lasso2d"]})
-    st.caption(f"{len(d)} samples. Scroll or pinch to zoom, drag to move, double-click to reset. "
+                            "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"]})
+    st.caption(f"{len(d)} samples. Scroll or pinch to zoom, drag to move, double-click or the house button to reset. "
                "Hover over a point to see the sample, its coordinates and its age.")
     opts = list(LOC_ANSWERS)
     cur = S.get("location_check")
