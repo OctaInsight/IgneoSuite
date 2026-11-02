@@ -47,20 +47,49 @@ def _save_loc_answer(key):
     telemetry.event("locations", {"answer": S[key]}, _user())
 
 
+@st.cache_data
+def _world():
+    import json
+    from pathlib import Path
+    return json.loads((Path(__file__).parent / "data" / "world_countries.geojson").read_text())
+
+
 def location_map(key: str):
-    """Map of the samples with a question on whether the locations are correct."""
-    import pydeck as pdk
+    """Interactive map of the samples with a question on whether the locations are correct."""
+    import plotly.graph_objects as go
     from .location import map_view
     m = S.meta
-    d = pd.DataFrame({"sample": [str(x) for x in S.ids], "lat": m.latitude.values, "lon": m.longitude.values,
+    ids = [str(x) for x in S.ids]
+    d = pd.DataFrame({"sample": ids, "lat": m.latitude.values, "lon": m.longitude.values,
                       "age": [("%.0f Ma" % a) if np.isfinite(a) else "no age" for a in m.age_ma.values]})
-    layer = pdk.Layer("ScatterplotLayer", d, get_position=["lon", "lat"], get_fill_color=[42, 120, 214, 190],
-                      get_line_color=[11, 11, 11, 200], line_width_min_pixels=0.5, stroked=True,
-                      get_radius=300, radius_min_pixels=3, radius_max_pixels=7, pickable=True)
-    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=pdk.ViewState(**map_view(d.lat.values, d.lon.values)),
-                             map_style="light", tooltip={"text": "{sample}\n{lat}, {lon}\n{age}"}),
-                    height=420)
-    st.caption(f"{len(d)} samples. Hover over a point to see the sample, its coordinates and its age.")
+    has_age = m.age_ma.notna().values
+    fig = go.Figure()
+    for sel, name, colour in ((~has_age, "Without age", plots.CAT[1]), (has_age, "With age", plots.CAT[0])):
+        if sel.any():
+            fig.add_trace(go.Scattermap(
+                lat=d.lat[sel], lon=d.lon[sel], mode="markers", name=f"{name} ({int(sel.sum())})",
+                marker=dict(size=6, color=colour, opacity=0.85),
+                customdata=d[["sample", "age"]][sel].values,
+                hovertemplate="<b>%{customdata[0]}</b><br>%{lat:.4f}, %{lon:.4f}<br>%{customdata[1]}<extra></extra>"))
+    v = map_view(d.lat.values, d.lon.values)
+    layers = [
+        # online street-map tiles (shown when they can be loaded)
+        dict(sourcetype="raster", below="traces", sourceattribution="© OpenStreetMap contributors © CARTO",
+             source=["https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+                     "https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"]),
+        # bundled country outlines (always shown, also without internet access to tile servers)
+        dict(sourcetype="geojson", source=_world(), type="fill", color="#e9e7e1", opacity=0.35, below="traces"),
+        dict(sourcetype="geojson", source=_world(), type="line", color="#8a8882", line=dict(width=0.7), below="traces"),
+    ]
+    fig.update_layout(map=dict(style="white-bg", layers=layers,
+                               center=dict(lat=v["latitude"], lon=v["longitude"]), zoom=v["zoom"]),
+                      margin=dict(l=0, r=0, t=0, b=0), height=480,
+                      legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)", font=dict(size=12)))
+    st.plotly_chart(fig, width='stretch', key=key + "_map",
+                    config={"scrollZoom": True, "displaylogo": False, "displayModeBar": True,
+                            "modeBarButtonsToRemove": ["select2d", "lasso2d"]})
+    st.caption(f"{len(d)} samples. Scroll or pinch to zoom, drag to move, double-click to reset. "
+               "Hover over a point to see the sample, its coordinates and its age.")
     opts = list(LOC_ANSWERS)
     cur = S.get("location_check")
     st.radio("Are the sample locations correct?", opts, format_func=LOC_ANSWERS.get, key=key,

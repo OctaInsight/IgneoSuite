@@ -114,10 +114,10 @@ def read_age(raw: pd.Series) -> tuple[np.ndarray, int]:
 
 
 def map_view(lat: np.ndarray, lon: np.ndarray) -> dict:
-    """Centre and zoom that show every point."""
+    """Centre on the samples, zoomed out to continent scale (users zoom in from there)."""
     la, lo = lat[np.isfinite(lat)], lon[np.isfinite(lon)]
     if not len(la):
         return dict(latitude=0, longitude=0, zoom=1)
     span = max(np.ptp(la), np.ptp(lo) * np.cos(np.radians(np.mean(la))), 0.05)
-    zoom = float(np.clip(np.log2(360 / span) - 0.8, 1, 12))
+    zoom = float(np.clip(np.log2(360 / span) - 1.6, 0.8, 2.5))
     return dict(latitude=float((la.min() + la.max()) / 2), longitude=float((lo.min() + lo.max()) / 2), zoom=zoom)
