@@ -134,4 +134,12 @@ portal/README.md       plan for the Octa Insight portal (Supabase)
 
 ## Licence
 
-MIT (see `LICENSE`).
+Copyright (C) 2026 Octa Insight. Produced by Octa Systems.
+
+IgneoSuite is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
+Public License as published by the Free Software Foundation, version 3 only (AGPL-3.0-only). It is distributed in the
+hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See `LICENSE` for the full text.
+
+Because the AGPL covers use over a network, anyone who runs a modified version of IgneoSuite as a web service must
+offer its users the corresponding source code. The app links to this repository from its sidebar and About page.

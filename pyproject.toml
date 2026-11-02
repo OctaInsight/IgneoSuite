@@ -1,9 +1,0 @@
-[project]
-name = "igneosuite"
-version = "1.0.0"
-description = "Gap-filling and data tools for incomplete igneous geochemical data"
-requires-python = ">=3.10"
-license = { text = "MIT" }
-
-[tool.setuptools.package-data]
-igneosuite = ["data/*.geojson", "data/*.md", "data/*.png"]

@@ -1118,6 +1118,11 @@ it with the IgneoSuite compilation if you wish. Every step can be saved and reop
 **Methods.** {"; ".join(f"*{m}*: {d}" for m, (_, d) in METHODS.items())}.
 Model-based methods work on log10-transformed, standardised values.
 
+**Licence.** IgneoSuite is free software: you can redistribute it and/or modify it under the terms of the
+GNU Affero General Public License, version 3 only (AGPL-3.0-only). It comes with no warranty. The complete source code
+of the version you are using is at [github.com/OctaInsight/IgneoSuite](https://github.com/OctaInsight/IgneoSuite).
+© 2026 Octa Insight. Produced by Octa Systems.
+
 **Reference.** Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M.
 When simpler wins: recovering the structure of incomplete geochemical data. *Computers & Geosciences* (submitted).
 
@@ -1141,13 +1146,18 @@ PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, pag
                          page_about]))
 
 
+SOURCE_URL = "https://github.com/OctaInsight/IgneoSuite"
+
+
 def _sidebar_footer():
     from pathlib import Path
     st.divider()
     st.markdown(
         f"<div style='font-size:0.82rem;line-height:1.5;color:#52514e'>"
         f"<b style='color:#0b0b0b'>IgneoSuite {__version__}</b> · Octa Insight<br>"
-        f"© 2026 Octa Insight<br>Produced by Octa Systems</div>", unsafe_allow_html=True)
+        f"© 2026 Octa Insight · Produced by Octa Systems<br>"
+        f"Free software under the <a href='https://www.gnu.org/licenses/agpl-3.0.html' target='_blank'>GNU AGPL v3</a> · "
+        f"<a href='{SOURCE_URL}' target='_blank'>Source code</a></div>", unsafe_allow_html=True)
     logo = Path(__file__).parent / "data" / "octa_logo.png"
     if logo.exists():
         st.image(str(logo), width=120)
