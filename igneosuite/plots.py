@@ -84,24 +84,23 @@ def method_bars(table):
     return fig
 
 
-def per_variable_errors(long, methods):
-    vars_ = list(dict.fromkeys(long.variable))
+def per_variable_errors(pervar, methods):
+    """pervar: median |log10 error| per variable (rows) and method (columns)."""
+    vars_ = list(pervar.index)
     fig, ax = plt.subplots(figsize=(6.5, 3.0))
     w = 0.8 / max(len(methods), 1)
     for i, m in enumerate(methods):
-        med = long[long.method == m].groupby("variable").log_err.median().reindex(vars_)
-        ax.bar(np.arange(len(vars_)) + (i - (len(methods) - 1) / 2) * w, med.values, w,
+        ax.bar(np.arange(len(vars_)) + (i - (len(methods) - 1) / 2) * w, pervar[m].values, w,
                color=METHOD_COLOUR.get(m, CAT[i % 8]), label=m)
     ax.set_xticks(range(len(vars_))); ax.set_xticklabels([str(v).split()[0] for v in vars_], rotation=90)
     ax.set_ylabel("Median |log10 error|"); ax.legend(frameon=False, ncol=min(len(methods), 4)); ax.grid(axis="x", visible=False)
     return fig
 
 
-def true_vs_est(long, method, max_points=4000):
-    d = long[(long.method == method) & (long.true > 0) & (long.estimate > 0)]
-    if len(d) > max_points:
-        d = d.sample(max_points, random_state=0)
-    fig, ax = plt.subplots(figsize=(3.4, 3.4))
+def true_vs_est(sample, method):
+    """sample: hidden cells with columns method, true, estimate."""
+    d = sample[sample.method == method]
+    fig, ax = plt.subplots(figsize=(3.2, 3.2))
     ax.scatter(d.true, d.estimate, s=4, alpha=0.4, color=METHOD_COLOUR.get(method, CAT[0]), lw=0)
     lo, hi = np.nanmin([d.true.min(), d.estimate.min()]), np.nanmax([d.true.max(), d.estimate.max()])
     xs = np.array([lo, hi])
@@ -109,6 +108,52 @@ def true_vs_est(long, method, max_points=4000):
     ax.set_xscale("log"); ax.set_yscale("log")
     ax.set_xlabel("Measured (hidden) value"); ax.set_ylabel(f"{method} estimate")
     ax.set_title("Dashed lines: factor of 2", loc="left", fontsize=7, color=INK2)
+    return fig
+
+
+def scree(ev):
+    ev = np.asarray(ev); c = np.cumsum(ev); n = len(ev)
+    fig, ax = plt.subplots(figsize=(3.4, 2.6))
+    ax.bar(np.arange(1, n + 1), 100 * ev, color=CAT[0], width=0.7, label="Each component")
+    ax.plot(np.arange(1, n + 1), 100 * c, color=CAT[1], marker="o", ms=2.5, lw=1, label="Cumulative")
+    ax.axhline(80, color=INK2, ls=":", lw=0.8); ax.text(n, 81, "80%", ha="right", va="bottom", fontsize=7, color=INK2)
+    ax.set_xlabel("Principal component"); ax.set_ylabel("Variance explained (%)"); ax.set_ylim(0, 105)
+    ax.legend(frameon=False, loc="center right"); ax.grid(axis="x", visible=False)
+    return fig
+
+
+def loadings(L, names, ev):
+    """L: variables × components loadings; first two components are drawn."""
+    k = min(2, L.shape[1])
+    fig, axes = plt.subplots(1, k, figsize=(6.5, max(2.6, 0.13 * len(names) + 0.8)), sharey=True)
+    axes = np.atleast_1d(axes)
+    y = np.arange(len(names))
+    for j, ax in enumerate(axes):
+        v = L[:, j]
+        ax.barh(y, v, color=[CAT[0] if x >= 0 else CAT[1] for x in v], height=0.75)
+        ax.axvline(0, color=INK2, lw=0.6)
+        ax.set_title(f"PC{j + 1} ({100 * ev[j]:.0f}%)", loc="left"); ax.grid(axis="y", visible=False)
+        ax.set_xlabel("Loading")
+    axes[0].set_yticks(y); axes[0].set_yticklabels([str(n).split()[0] for n in names]); axes[0].invert_yaxis()
+    fig.tight_layout()
+    return fig
+
+
+def pc_scores(P, ev, colour=None, colour_label=None, labels=None):
+    fig, ax = plt.subplots(figsize=(3.4, 3.2))
+    if labels is not None:
+        for l in np.unique(labels):
+            s = labels == l
+            ax.scatter(P[s, 0], P[s, 1], s=4, alpha=0.6, lw=0, color=CAT[(int(l) - 1) % 8], label=f"C{l}")
+        ax.legend(frameon=False, markerscale=2)
+    elif colour is not None and np.isfinite(colour).any():
+        ok = np.isfinite(colour)
+        ax.scatter(P[~ok, 0], P[~ok, 1], s=4, alpha=0.4, lw=0, color="#b9b7b1", label="no value")
+        sc = ax.scatter(P[ok, 0], P[ok, 1], s=4, alpha=0.7, lw=0, c=colour[ok], cmap=SEQ)
+        cb = fig.colorbar(sc, ax=ax, shrink=0.8); cb.set_label(colour_label or "")
+    else:
+        ax.scatter(P[:, 0], P[:, 1], s=4, alpha=0.5, lw=0, color=CAT[0])
+    ax.set_xlabel(f"PC1 ({100*ev[0]:.0f}%)"); ax.set_ylabel(f"PC2 ({100*ev[1]:.0f}%)")
     return fig
 
 

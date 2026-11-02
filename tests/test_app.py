@@ -39,7 +39,7 @@ def test_location_check_and_submission_rows():
     i, v = guess_columns(raw)
     assert "Latitude" not in v and "Age (Ma)" not in v
     g, loc, meta = _meta(raw, raw[i].astype(str).values)
-    assert g == {"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)"}
+    assert g["latitude"] == "Latitude" and g["age_ma"] == "Age (Ma)" and g["reference"] is None
     assert len(loc["problems"]) == 1 and loc["problems"].Row.iloc[0] == 4 and not loc["valid"][2]
     assert not loc["swapped"]
     from igneosuite.location import check_locations
@@ -62,7 +62,8 @@ def test_template_reads_back():
     raw = pd.read_excel(io.BytesIO(build()), sheet_name="Data", dtype=object)
     i, v = guess_columns(raw)
     g = guess_meta(raw)
-    assert i == "Sample ID" and g == {"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)"}
+    assert i == "Sample ID" and g == {"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)",
+                                      "reference": "Reference", "comment": "Comment"}
     assert len(v) == 45
     from igneosuite.location import check_locations
     loc = check_locations(raw[i].values, raw.Latitude, raw.Longitude)
@@ -89,10 +90,9 @@ def test_methods_keep_measured_and_fill():
 def test_knn_beats_median_and_errors():
     (X, ids, _), i, v = _data()
     M = X.values; cols = list(X.columns)
-    s = validate.run(M, cols, ["Median", "KNN"], "scattered", 0.05, reps=2)
-    b = validate.run(M, cols, ["Median", "KNN"], "block", 0.1, list(range(8, 22)), reps=2)
-    ts, tb = validate.score(s), validate.score(b)
-    assert ts.index[0] == "KNN" and tb.index[0] == "KNN"
+    s = validate.compact(validate.run(M, cols, ["Median", "KNN"], "scattered", 0.05, reps=2))
+    b = validate.compact(validate.run(M, cols, ["Median", "KNN"], "block", 0.1, list(range(8, 22)), reps=2))
+    assert s["score"].index[0] == "KNN" and b["score"].index[0] == "KNN"
     est = impute(M, "KNN")
     F = errors.error_factors(s, b, "KNN", cols)
     E = errors.error_matrix(M, est, cols, F, list(range(8, 22)))
@@ -100,3 +100,15 @@ def test_knn_beats_median_and_errors():
     three = export.three_column(ids, i, cols, M, est, E)
     assert three.shape[1] == 1 + 3 * len(cols)
     assert len(export.to_excel({"a": three}, ["n"])) > 1000
+
+
+def test_geometry():
+    from igneosuite import geometry
+    (X, ids, _), i, v = _data()
+    est = impute(X.values, "KNN")
+    refs = np.array(["A", "B", "C"])[np.arange(len(X)) % 3]
+    g = geometry.analyse(geometry.prepare(est), refs=refs)
+    m = g["metrics"]
+    assert 1 <= m["pcs_80"] <= X.shape[1] and 0 < m["hopkins"] < 1 and m["twonn_dimension"] > 0
+    assert abs(m["same_reference_chance"] - 1 / 3) < 0.01
+    assert g["loadings"].shape == (X.shape[1], 3) and g["scores"].shape == (len(X), 3)

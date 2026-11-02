@@ -7,15 +7,15 @@ import streamlit as st
 from . import __version__
 from .io import read_table, clean_table, guess_columns, guess_meta, read_meta, REE, short_name
 from . import submit as submit_mod
-from . import diagnose, validate, errors, export, cluster, plots, telemetry, jobs
+from . import diagnose, validate, errors, export, cluster, plots, telemetry, jobs, store, geometry
 from .facts import FACTS
 import time
 from .imputers import METHODS, available_methods, impute, DEEP, HAS_TORCH
 
 APP_META = dict(id="igneosuite", name="IgneoSuite", tagline="Gap-filling for incomplete igneous geochemistry",
                 version=__version__)
-STEPS = ["1 · Load data", "2 · Missing values", "3 · Test methods", "4 · Fill and export", "5 · Clusters",
-         "6 · Submit to database", "About"]
+STEPS = ["1 · Load data", "2 · Missing values", "3 · Test methods", "4 · Fill and export", "5 · Data geometry",
+         "6 · Clusters", "7 · Save & share", "About"]
 S = st.session_state
 
 
@@ -23,8 +23,13 @@ def _user():
     return S.get("_user")
 
 
-def _img(fig, caption=None):
-    st.image(plots.to_png(fig), caption=caption, width='stretch')
+def _img(fig, caption=None, half=False):
+    if half:
+        col, _ = st.columns(2)
+        with col:
+            st.image(plots.to_png(fig), caption=caption, width='stretch')
+    else:
+        st.image(plots.to_png(fig), caption=caption, width='stretch')
 
 
 def _need(key, msg):
@@ -124,11 +129,18 @@ def page_load():
     st.header("Load data")
     st.write("Upload a table with one sample per row. Every sample needs a sample ID, latitude and longitude; "
              "age is optional but recommended. None of these are used in calculations.")
+    open_project_box()
     st.download_button("Download the Excel template", build_template(), "IgneoSuite_template.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        on_click=telemetry.event, args=("template", {}, _user()),
                        help="Fill in the sheet 'Data' and upload it here. The sheet 'Instructions' explains the formats.")
     up = st.file_uploader("CSV or Excel file", type=["csv", "txt", "xlsx", "xlsm", "xls"])
+    if up is None and "raw" not in S and "X" in S:          # project reopened from the database
+        st.info(f"Showing the saved project **{S.get('project_meta', {}).get('title', '')}**. "
+                "Upload a file to start a new project instead.")
+        show_loaded()
+        save_bar("load")
+        return
     if up is None and "raw" not in S:
         st.caption("Blank cells and placeholders such as n.d., b.d.l., '-' or '<0.5' are read as missing. "
                    "Coordinates may be decimal degrees (25.4567) or degrees-minutes-seconds (25°27'24\"N).")
@@ -145,6 +157,7 @@ def page_load():
             for k in list(S.keys()):
                 if k not in ("step", "_user", "_sid"):
                     del S[k]
+            st.query_params.clear()
             S.raw = read_table(up, sheet)
             S.sig = sig
     raw = S.raw
@@ -162,6 +175,13 @@ def page_load():
         cur = mg.get(key) if mg.get(key) in opts else none
         v = box.selectbox(label, opts, index=opts.index(cur), key=f"meta_{key}_{fk}")
         meta_cols[key] = None if v == none else v
+    mc2 = st.columns(3)
+    for box, key, label in zip(mc2, ["reference", "comment"], ["Reference of each sample, optional",
+                                                             "Comment on each sample, optional"]):
+        opts = ["(none)"] + [c for c in cols if c != id_col and c not in meta_cols.values()]
+        cur = mg.get(key) if mg.get(key) in opts else "(none)"
+        v = box.selectbox(label, opts, index=opts.index(cur), key=f"meta_{key}_{fk}")
+        meta_cols[key] = None if v == "(none)" else v
     taken = {id_col, *[v for v in meta_cols.values() if v]}
     choices = [c for c in cols if c not in taken]
     default = [c for c in S.get("value_cols", val_guess) if c in choices]
@@ -171,7 +191,8 @@ def page_load():
         drop_bad = st.checkbox(f"Remove the {len(S.loc_problems)} samples with location problems and continue",
                                key="drop_" + fk)
     if st.button("Read values", type="primary", disabled=not value_cols):
-        for k in ("X", "val_scat", "val_block", "est", "E", "clu", "location_check", "location_comment", "submitted_id"):
+        for k in ("X", "val_scat", "val_block", "est", "E", "clu", "geo", "location_check", "location_comment",
+                  "submitted_id", "saved", "changed"):
             S.pop(k, None)
         if not meta_cols["latitude"] or not meta_cols["longitude"]:
             S.pop("loc_problems", None)
@@ -200,12 +221,20 @@ def page_load():
             age, age_bad = read_age(sub[meta_cols["age_ma"]])
         else:
             age, age_bad = np.full(len(sub), np.nan), 0
+        def _text(col, n):
+            if not col:
+                return [None] * len(sub)
+            return [None if (v is None or (isinstance(v, float) and np.isnan(v)) or str(v).strip() == "")
+                    else str(v).strip()[:n] for v in sub[col]]
         S.meta = pd.DataFrame({"latitude": loc["latitude"][keep], "longitude": loc["longitude"][keep], "age_ma": age,
                                "latitude_original": sub[meta_cols["latitude"]].astype(str).str.slice(0, 60).values,
-                               "longitude_original": sub[meta_cols["longitude"]].astype(str).str.slice(0, 60).values})
+                               "longitude_original": sub[meta_cols["longitude"]].astype(str).str.slice(0, 60).values,
+                               "reference": _text(meta_cols.get("reference"), 1000),
+                               "comment": _text(meta_cols.get("comment"), 2000)})
         rep.update(n_removed=int((~keep).sum()), n_converted=loc["n_converted"], age_rejected=age_bad,
                    precision_note=loc["precision_note"])
         S.update(X=X, ids=ids, report=rep, id_col=id_col, value_cols=value_cols, meta_cols=meta_cols)
+        _changed("load")
         sm = diagnose.summary(X)
         telemetry.event("load", dict(n_samples=sm["n_samples"], n_variables=sm["n_variables"],
                                      pct_missing=round(sm["pct_missing"], 2), n_complete=sm["n_complete"],
@@ -220,6 +249,12 @@ def page_load():
                            "IgneoSuite_location_problems.csv", "text/csv")
         return
     if "X" in S:
+        show_loaded()
+        save_bar("load")
+
+
+def show_loaded():
+    if True:
         rep = S.report
         c = st.columns(4)
         c[0].metric("Samples", rep["n_rows"]); c[1].metric("Variables", rep["n_cols"])
@@ -249,10 +284,17 @@ def page_load():
         st.subheader("Sample locations")
         location_map("loc_answer_load")
         st.subheader("Data")
+        n_ref = int(S.meta.get("reference", pd.Series(dtype=object)).notna().sum())
+        if n_ref:
+            st.caption(f"{n_ref} samples have a reference; "
+                       f"{int(S.meta.get('comment', pd.Series(dtype=object)).notna().sum())} have a comment.")
+        extra = [c for c in ("reference", "comment") if c in S.meta and S.meta[c].notna().any()]
         st.dataframe(pd.concat([pd.Series(S.ids, name=S.id_col),
-                                S.meta[["latitude", "longitude", "age_ma"]].rename(
-                                    columns={"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)"}),
+                                S.meta[["latitude", "longitude", "age_ma"] + extra].rename(
+                                    columns={"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)",
+                                             "reference": "Reference", "comment": "Comment"}),
                                 S.X], axis=1).head(200), width='stretch')
+
 
 
 # ---------------------------------------------------------------- 2 diagnose
@@ -295,6 +337,7 @@ def page_diagnose():
             if bp["Partly measured"] < 0.3 * max(bp["All measured"] + bp["None measured"], 1):
                 st.info("The REE are mostly all present or all absent. Use the block test in step 3, "
                         "because it mirrors the way these values are actually missing.")
+    save_bar("missing")
 
 
 # ---------------------------------------------------------------- 3 validate
@@ -312,8 +355,12 @@ def collect_jobs():
         if not job or job["status"] == "running":
             continue
         jobs.pop(_job_key(kind))
-        if job["status"] == "done":
-            S[store] = job["result"]
+        if job["status"] == "done" and (job["result"] is None or job["result"].empty):
+            S[f"{kind}_error"] = "no measured values could be hidden with these settings."
+        elif job["status"] == "done":
+            S[store] = validate.compact(job["result"])
+            S[f"{kind}_params"] = job["info"]
+            _changed("test_scattered" if kind == "scat" else "test_block")
             S[f"{kind}_seconds"] = job["finished"] - job["started"]
             S[f"{kind}_just_done"] = True
             for k in ("est", "E"):
@@ -329,7 +376,7 @@ def _log_run(kind, job):
     try:
         long = job["result"]; info = job["info"]
         sm = diagnose.summary(S.X)
-        sc = {("scattered" if kind == "scat" else "block"): validate.score(long).round(4).to_dict(orient="index")}
+        sc = {("scattered" if kind == "scat" else "block"): validate.score(long).round(4).to_dict(orient="index")} if not long.empty else {}
         telemetry.run(dict(n_samples=sm["n_samples"], n_variables=sm["n_variables"],
                            pct_missing=round(sm["pct_missing"], 2), n_complete=sm["n_complete"],
                            methods=info["methods"], repetitions=int(info["reps"]),
@@ -427,7 +474,7 @@ def page_validate():
         for k in ("val_scat", "val_block", "scat_error", "block_error"):
             S.pop(k, None)
         _start("scat", M, cols, methods, "scattered", frac, None, reps, seed,
-               dict(methods=methods, reps=reps, frac=frac), eta)
+               dict(methods=methods, reps=int(reps), frac=frac, seed=int(seed)), eta)
         telemetry.event("test", {"kind": "scattered", "methods": methods, "reps": int(reps)}, _user())
         st.rerun()
 
@@ -447,7 +494,7 @@ def page_validate():
             progress_panel("block")
         elif S.get("block_error"):
             st.error(f"Test 2 did not finish: {S.block_error}")
-        elif S.pop("block_just_done", False) or ("val_block" in S and not S.val_block.empty):
+        elif S.pop("block_just_done", False) or S.get("val_block"):
             st.success("✅ Both tests are complete. You are ready to go to **step 4 · Fill and export**.")
         elif not ready1:
             st.info("Run test 1 first. Test 2 uses the same methods and repetitions.")
@@ -466,33 +513,46 @@ def page_validate():
         S.pop("val_block", None); S.pop("block_error", None)
         lo2, hi2 = validate.estimate_seconds(S.methods, len(X), len(cols), S.reps)
         _start("block", M, cols, S.methods, "block", bfrac, [cols.index(b) for b in block], S.reps, S.get("seed", 0),
-               dict(methods=S.methods, reps=S.reps, frac=bfrac, block=block), validate.describe_seconds(lo2, hi2))
+               dict(methods=S.methods, reps=int(S.reps), frac=bfrac, block=block, seed=int(S.get("seed", 0))),
+               validate.describe_seconds(lo2, hi2))
         telemetry.event("test", {"kind": "block", "methods": S.methods, "reps": int(S.reps)}, _user())
         st.rerun()
 
     # ---- results
     have = [(k, n) for k, n in (("val_scat", "Test 1 · Scattered gaps"), ("val_block", "Test 2 · Block gaps"))
-            if k in S and not S[k].empty]
+            if S.get(k)]
     if not have:
         return
     st.subheader("Results")
-    for tab, (key, name) in zip(st.tabs([n for _, n in have]), have):
-        with tab:
-            long = S[key]
-            tb = validate.score(long)
-            st.dataframe(_fmt(tb, 3), width='stretch')
-            _img(plots.method_bars(tb))
-            _img(plots.per_variable_errors(long, list(tb.index)))
-            m = st.selectbox("Measured vs estimated for", list(tb.index), key=key + "_m")
-            _img(plots.true_vs_est(long, m))
-    rec_s, why_s = validate.recommend(validate.score(S.val_scat))
+    if len(have) == 2:
+        cmp = pd.DataFrame({"Test 1 · scattered: median |log10 error|": S.val_scat["score"]["Median |log10 error|"],
+                            "Test 1 · within ×2 (%)": S.val_scat["score"]["Within ×2 (%)"],
+                            "Test 2 · block: median |log10 error|": S.val_block["score"]["Median |log10 error|"],
+                            "Test 2 · within ×2 (%)": S.val_block["score"]["Within ×2 (%)"]})
+        st.caption("Both tests side by side")
+        st.dataframe(_fmt(cmp, 3), width='stretch')
+    for key, name in have:
+        res = S[key]
+        st.markdown(f"#### {name}")
+        if key == "val_block":
+            bp = S.get("block_params", {})
+            st.caption(f"{len(bp.get('block', []))} variables hidden together: "
+                       f"{', '.join(short_name(b) for b in bp.get('block', []))}.")
+        tb = res["score"]
+        st.dataframe(_fmt(tb, 3), width='stretch')
+        _img(plots.method_bars(tb))
+        _img(plots.per_variable_errors(res["pervar"], list(tb.index)))
+        m = st.selectbox("Measured vs estimated for", list(tb.index), key=key + "_m")
+        _img(plots.true_vs_est(res["sample"], m), half=True)
+    rec_s, why_s = validate.recommend(S.val_scat["score"])
     msg = f"**Recommended method: {rec_s}.** {why_s}"
-    if "val_block" in S and not S.val_block.empty:
-        rec_b, _ = validate.recommend(validate.score(S.val_block))
+    if S.get("val_block"):
+        rec_b, _ = validate.recommend(S.val_block["score"])
         if rec_b != rec_s:
             msg += f" For the block test, {rec_b} did best; weigh the two by how your data are missing (step 2)."
     S.recommended = rec_s
     st.success(msg)
+    save_bar("test")
 
 
 # ---------------------------------------------------------------- 4 impute + export
@@ -507,7 +567,7 @@ def page_fill():
     if "val_scat" not in S:
         st.warning("Run the tests in step 3 first. They provide the error for every estimate.")
         st.stop()
-    tested = list(S.val_scat.method.unique())
+    tested = list(S.val_scat["score"].index)
     rec = S.get("recommended", tested[0])
     method = st.selectbox("Method", tested, index=tested.index(rec) if rec in tested else 0)
     q = st.select_slider("Error band", options=[0.68, 0.90, 0.95], value=0.68,
@@ -516,9 +576,10 @@ def page_fill():
         with st.spinner(f"Running {method}"):
             est = impute(M, method, seed=0)
         bidx = [cols.index(b) for b in S.get("block_names", [])]
-        F = errors.error_factors(S.val_scat, S.get("val_block", pd.DataFrame()), method, cols, q)
+        F = errors.error_factors(S.val_scat, S.get("val_block"), method, cols, q)
         E = errors.error_matrix(M, est, cols, F, bidx)
         S.update(est=est, E=E, F=F, fill_method=method, q=q)
+        _changed("fill")
         telemetry.event("fill", dict(method=method, q=q, n_estimated=int((np.isnan(M) & np.isfinite(est)).sum())), _user())
     if "est" not in S:
         return
@@ -538,17 +599,18 @@ def page_fill():
     note = ("For block variables in samples where the whole block was missing, the block-test error is used; "
             "otherwise the scattered-test error." if S.get("block_names") else "Errors come from the scattered test.")
     notes = export.default_notes(S.fill_method, note, n_est, cols)
-    summary_s = validate.score(S.val_scat)
+    summary_s = S.val_scat["score"]
     sheets = {"Measured_estimated_error": three, "Complete_matrix": comp,
               "Error_by_variable": fac, "Test_scattered": summary_s}
-    if "val_block" in S and not S.val_block.empty:
-        sheets["Test_block"] = validate.score(S.val_block)
+    if S.get("val_block"):
+        sheets["Test_block"] = S.val_block["score"]
     c = st.columns(2)
     c[0].download_button("Download Excel workbook", export.to_excel(sheets, notes), "igneosuite_results.xlsx",
                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary",
                          on_click=telemetry.event, args=("export", {"format": "xlsx"}, _user()))
     c[1].download_button("Download complete matrix (CSV)", comp.to_csv(index=False).encode(), "igneosuite_complete.csv", "text/csv",
                          on_click=telemetry.event, args=("export", {"format": "csv"}, _user()))
+    save_bar("fill")
 
 
 # ---------------------------------------------------------------- 5 clusters
@@ -571,6 +633,7 @@ def page_cluster():
         Z = cluster.prepare(M[rows][:, [cols.index(b) for b in base]])
         with st.spinner("Scanning"):
             S.kscan = cluster.scan_k(Z)
+        _changed("clusters")
     if "kscan" in S:
         _img(plots.k_scan(S.kscan)); st.dataframe(_fmt(S.kscan, 3))
     if st.button("Run comparison", type="primary", disabled=len(base) < 2 or len(extra) < 2):
@@ -580,7 +643,9 @@ def page_cluster():
         lr = cluster.kmeans(Zr, k)
         Zf = cluster.prepare(S.est[rows][:, ei])
         lf = cluster.match_labels(lr, cluster.kmeans(Zf, k))
-        S.clu = dict(rows=rows, Zr=Zr, Zf=Zf, lr=lr, lf=lf, base=base, extra=extra)
+        P, ev = cluster.pca(Zr)
+        S.clu = dict(rows=rows, lr=lr, lf=lf, base=base, extra=extra, k=k, P=P, ev=np.asarray(ev))
+        _changed("clusters")
         telemetry.event("cluster", dict(k=k, n_reference_vars=len(base), n_filled_vars=len(extra),
                                         same_cluster_pct=round(float(100 * np.mean(lr == lf)), 2)), _user())
     if "clu" in S:
@@ -594,7 +659,7 @@ def page_cluster():
         ct = pd.crosstab(pd.Series(c["lr"], name=f"Reference ({len(c['base'])} vars)"),
                          pd.Series(c["lf"], name=f"Gap-filled ({len(c['extra'])} vars)"))
         st.dataframe(ct)
-        P, ev = cluster.pca(c["Zr"])
+        P, ev = c["P"], c["ev"]
         cc = st.columns(2)
         with cc[0]:
             _img(plots.pca_scatter(P, ev, c["lr"], "Reference clusters"))
@@ -602,78 +667,384 @@ def page_cluster():
             _img(plots.pca_scatter(P, ev, c["lf"], "Gap-filled clusters"), "Both on the reference PCA axes")
         out = pd.DataFrame({S.id_col: np.asarray(S.ids)[c["rows"]], "Reference cluster": c["lr"], "Gap-filled cluster": c["lf"]})
         st.download_button("Download cluster labels (CSV)", out.to_csv(index=False).encode(), "igneosuite_clusters.csv", "text/csv")
+    if "clu" in S or "kscan" in S:
+        save_bar("clusters")
 
 
-def page_submit():
+# ---------------------------------------------------------------- 5 geometry
+def page_geometry():
     _need("X", "Load data first (step 1).")
-    st.header("Submit your data to the IgneoSuite database")
-    st.write("Share your analyses with the IgneoSuite compilation. Each sample is stored with its ID, location, "
-             "age and measured values. If you filled the gaps in step 4, the estimates and their errors are "
-             "stored too, kept separate from the measured values. Submissions are reviewed by Octa Insight "
-             "before they are used.")
-    if not telemetry.enabled():
+    X = S.X; cols = list(X.columns); M = X.values.astype(float)
+    st.header("Data geometry")
+    st.write("How the samples spread in composition space: how many directions carry the variation, whether "
+             "the samples form groups, and which elements define the main trends (principal components). "
+             "All measures use log10-transformed, standardised values.")
+    sources = ["Gap-filled data (step 4)", "Measured values only (complete samples)"]
+    have_est = "est" in S
+    gp = S.get("geo_params", {})
+    src = st.radio("Data", sources, horizontal=True,
+                   index=sources.index(gp.get("source", sources[0 if have_est else 1])))
+    if src == sources[0] and not have_est:
+        st.info("Fill the gaps in step 4 first, or use the measured values only.")
+        st.stop()
+    comp = X.notna().mean()
+    default = cols if src == sources[0] else [c for c in cols if comp[c] >= 0.8]
+    use = st.multiselect("Variables", cols, default=[c for c in gp.get("variables", default) if c in cols])
+    A = (S.est if src == sources[0] else M)[:, [cols.index(c) for c in use]] if use else np.empty((len(X), 0))
+    rows = ~np.isnan(A).any(1) if use else np.zeros(len(X), bool)
+    st.caption(f"{int(rows.sum()):,} samples have all chosen variables.")
+    if st.button("Calculate", type="primary", disabled=len(use) < 3 or rows.sum() < 20):
+        with st.spinner("Calculating the geometry of the data…"):
+            Z = geometry.prepare(A[rows])
+            refs = S.meta["reference"].values[rows] if "reference" in S.meta else None
+            res = geometry.analyse(Z, refs=refs)
+        res["rows"] = np.where(rows)[0]
+        res["variables"] = use
+        S.geo, S.geo_params = res, dict(source=src, variables=use)
+        _changed("geometry")
+        telemetry.event("geometry", {"source": src, "n_variables": len(use), "n_samples": int(rows.sum())}, _user())
+    if "geo" not in S:
+        return
+    g = S.geo
+    m = g["metrics"]
+    labels = {"n_samples": "Samples", "n_variables": "Variables", "pcs_80": "Components for 80% of variance",
+              "pcs_90": "Components for 90% of variance", "participation_ratio": "Participation ratio",
+              "twonn_dimension": "Intrinsic dimension (TwoNN)", "hopkins": "Hopkins statistic",
+              "nn_ratio_vs_gaussian": "Nearest-neighbour distance ÷ Gaussian",
+              "same_reference_nn": "Nearest neighbour from the same reference",
+              "same_reference_chance": "… expected by chance"}
+    tab = pd.DataFrame([{"Measure": labels[k], "Value": (f"{100*v:.1f}%" if k.startswith("same_reference")
+                                                         else f"{v:.2f}" if isinstance(v, float) else f"{v:,}"),
+                         "What it means": geometry.EXPLAIN[k]} for k, v in m.items()])
+    st.table(tab.set_index("Measure"))
+    ev = np.asarray(g["explained"])
+    c1, c2 = st.columns(2)
+    with c1:
+        st.image(plots.to_png(plots.scree(ev)), width='stretch', caption="Variance explained by each component")
+    with c2:
+        rows = np.asarray(g["rows"])
+        colour_opts = ["None"] + (["Age (Ma)"] if S.meta.age_ma.iloc[rows].notna().any() else []) + \
+                      (["Cluster (step 6)"] if "clu" in S else [])
+        how = st.selectbox("Colour samples by", colour_opts, key="geo_colour")
+        kw = {}
+        if how == "Age (Ma)":
+            kw = dict(colour=S.meta.age_ma.values[rows].astype(float), colour_label="Age (Ma)")
+        elif how == "Cluster (step 6)":
+            lab = np.zeros(len(X), int); lab[np.where(S.clu["rows"])[0]] = S.clu["lf"]
+            kw = dict(labels=lab[rows]) if (lab[rows] > 0).all() else {}
+        st.image(plots.to_png(plots.pc_scores(np.asarray(g["scores"]), ev, **kw)), width='stretch',
+                 caption="Samples on the first two principal components")
+    _img(plots.loadings(np.asarray(g["loadings"]), g["variables"], ev),
+         "Loadings: how strongly each element defines PC1 and PC2. Elements with long bars of the same sign rise and fall together.")
+    save_bar("geometry")
+
+
+# ---------------------------------------------------------------- 7 save
+def page_save():
+    _need("X", "Load data first (step 1).")
+    st.header("Save & share")
+    if not store.enabled():
         st.info("The database connection is not set up for this installation.")
         return
-    X = S.X; M = X.values.astype(float); cols = list(X.columns)
-    meta = S.meta
-    c = st.columns(4)
-    c[0].metric("Samples", len(X)); c[1].metric("Variables", len(cols))
-    c[2].metric("With location", int((meta.latitude.notna() & meta.longitude.notna()).sum()))
-    c[3].metric("With age", int(meta.age_ma.notna().sum()))
-    if meta.age_ma.isna().all():
-        st.info("No sample has an age. You can submit without ages, but dated samples are much more useful.")
-    if S.get("location_check") not in LOC_ANSWERS:
-        st.subheader("Check the locations")
-        location_map("loc_answer_submit")
-        if S.get("location_check") not in LOC_ANSWERS:
-            st.info("Answer the question under the map before submitting.")
-            return
-    if S.get("location_check") == "some_wrong":
-        st.warning("You said some sample locations are wrong. Please correct them in your file and upload it again "
-                   "(step 1) before submitting.")
-    if "submitted_id" in S:
-        st.success(f"Submitted. Reference number: {S.submitted_id}. Keep it if you need to contact us about this dataset.")
-    with st.form("submit_form"):
+    st.write("Your work is saved as a private project: the data, and the settings and results of every step you "
+             "have saved. Reopen it later to continue where you stopped, without repeating the calculations.")
+    pm = S.get("project_meta", {})
+    with st.form("project_form"):
         a, b = st.columns(2)
-        name = a.text_input("Author name *")
-        email = b.text_input("Email *")
-        aff = a.text_input("Affiliation")
-        title = b.text_input("Dataset title *")
-        ref = st.text_input("Publication or DOI the data come from")
-        desc = st.text_area("Short description (area, rock types, analytical methods)", max_chars=4000)
-        lic = st.selectbox("Licence", list(submit_mod.LICENCES), format_func=lambda k: submit_mod.LICENCES[k])
-        inc = False
-        if "est" in S:
-            inc = st.checkbox(f"Include the {S.fill_method} estimates and their errors from step 4", value=True)
-        consent = st.checkbox("I have the right to share these data, and I agree that Octa Insight stores them and "
-                              "uses them under the licence chosen above. *")
-        go = st.form_submit_button("Submit", type="primary")
+        title = a.text_input("Dataset name *", value=pm.get("title", ""))
+        ref = b.text_input("DOI or reference of the compilation", value=pm.get("reference") or "")
+        desc = st.text_area("Short description (area, rock types, analytical methods)", value=pm.get("description") or "",
+                            max_chars=4000)
+        a, b, c = st.columns(3)
+        name = a.text_input("Author name", value=pm.get("author_name") or "")
+        email = b.text_input("Email", value=pm.get("author_email") or "")
+        aff = c.text_input("Affiliation", value=pm.get("affiliation") or "")
+        lics = list(submit_mod.LICENCES)
+        lic = st.selectbox("Licence", lics, index=lics.index(pm.get("licence", "CC-BY-4.0")),
+                           format_func=lambda k: submit_mod.LICENCES[k])
+        share = st.checkbox("Share this dataset with the IgneoSuite compilation (reviewed by Octa Insight first)",
+                            value=bool(pm.get("shared", False)))
+        consent = st.checkbox("I have the right to store these data, and I agree that Octa Insight keeps them in the "
+                              "IgneoSuite database under the licence chosen above. *", value=bool(pm.get("consent")))
+        go = st.form_submit_button("Save everything", type="primary")
     if go:
-        problems = [m for ok, m in [(len(name.strip()) >= 2, "author name"), ("@" in email, "a valid email"),
-                                    (len(title.strip()) >= 3, "dataset title"), (consent, "your consent")] if not ok]
-        if S.get("location_check") == "some_wrong":
-            problems.append("corrected locations (you said some are wrong: fix them in your file and upload it again)")
-        if problems:
-            st.error("Please add " + ", ".join(problems) + ".")
-            return
-        bar = st.progress(0.0, "Sending dataset")
+        if len(title.strip()) < 3 or not consent:
+            st.error("Please give the dataset a name (at least 3 characters) and tick the consent box.")
+        elif share and S.get("location_check") == "some_wrong":
+            st.error("You said some sample locations are wrong. Correct them before sharing the dataset.")
+        else:
+            S.project_meta = dict(title=title.strip(), reference=ref.strip() or None, description=desc.strip() or None,
+                                  author_name=name.strip() or None, author_email=email.strip() or None,
+                                  affiliation=aff.strip() or None, licence=lic, shared=share, consent=True)
+            do_save(["load", "missing", "test", "fill", "geometry", "clusters"], meta_changed=True)
+    project_info()
+
+
+# ---------------------------------------------------------------- saving and reopening
+STEP_PAGES = {"load": 0, "missing": 1, "test_scattered": 2, "test_block": 2, "fill": 3, "geometry": 4, "clusters": 5}
+STEP_LABEL = {"load": "step 1", "missing": "step 2", "test": "step 3", "fill": "step 4", "geometry": "step 5",
+              "clusters": "step 6"}
+
+
+def _changed(step):
+    S.setdefault("changed", {})[step] = time.time()
+
+
+def _available(step) -> bool:
+    return {"load": "X" in S, "missing": "X" in S, "test": bool(S.get("val_scat")), "fill": "est" in S,
+            "geometry": "geo" in S, "clusters": "clu" in S or "kscan" in S}[step]
+
+
+def _rows_for_samples():
+    cols = list(S.X.columns)
+    rows = submit_mod.sample_rows("x", S.ids, cols, S.X.values.astype(float), S.meta,
+                                  S.get("est"), S.get("E"))
+    for r, i in zip(rows, range(len(rows))):
+        r.pop("dataset_id", None)
+        for c in ("reference", "comment"):
+            if c in S.meta:
+                v = S.meta[c].iloc[i]
+                r[c] = None if v is None or (isinstance(v, float) and np.isnan(v)) else str(v)
+    return rows
+
+
+def _pack(step):
+    """(params, results) to store for one step."""
+    X = S.X
+    if step == "load":
+        return (dict(id_column=S.id_col, column_map=S.meta_cols, variables=list(X.columns),
+                     file=(S.get("sig") or [None])[0]),
+                dict(report=S.report))
+    if step == "missing":
+        ree = diagnose.groups(X).get("REE", [])
+        return ({}, dict(summary=diagnose.summary(X), per_variable=diagnose.per_variable(X),
+                         co_missing_phi=diagnose.co_missing_phi(X), completeness=diagnose.completeness_curve(X),
+                         groups=diagnose.groups(X), ree_pattern=diagnose.block_pattern(X, ree)))
+    if step == "test_scattered":
+        return S.get("scat_params", {}), S.val_scat
+    if step == "test_block":
+        return S.get("block_params", {}), S.val_block
+    if step == "fill":
+        return (dict(method=S.fill_method, error_band=S.q, block_variables=S.get("block_names", [])),
+                dict(error_factors=S.F, n_estimated=int((np.isnan(X.values) & np.isfinite(S.est)).sum())))
+    if step == "geometry":
+        return S.geo_params, S.geo
+    if step == "clusters":
+        c = S.get("clu", {})
+        res = {"k_scan": S.get("kscan")}
+        if c:
+            res.update(rows=np.where(c["rows"])[0], reference_labels=c["lr"], filled_labels=c["lf"],
+                       pca_scores=c["P"], pca_explained=c["ev"],
+                       crosstab=pd.crosstab(pd.Series(c["lr"], name="reference"), pd.Series(c["lf"], name="filled")))
+        return (dict(reference_variables=c.get("base"), filled_variables=c.get("extra"), k=c.get("k")), res)
+    raise KeyError(step)
+
+
+def _dataset_meta():
+    m = dict(S.get("project_meta", {}))
+    m.update(n_samples=len(S.X), n_variables=S.X.shape[1], variables=list(S.X.columns), id_column=S.id_col,
+             column_map=S.meta_cols, location_check=S.get("location_check", "not_checked"),
+             location_comment=S.get("location_comment") or None, n_with_age=int(S.meta.age_ma.notna().sum()),
+             session_id=telemetry.session_id())
+    if "est" in S:
+        m.update(estimation_method=S.fill_method, error_band=S.q)
+    return m
+
+
+def do_save(steps, meta_changed=False):
+    """Save the given steps (and everything they depend on) to the project, creating it if needed."""
+    user = _user()
+    new = "project" not in S
+    p = S.get("project") or store.new_project()
+    saved = S.setdefault("saved", {})
+    changed = S.get("changed", {})
+    todo = [x for x in steps if _available(x)]
+    with st.status("Saving to the IgneoSuite database…", expanded=True) as box:
         try:
-            did = submit_mod.submit(dict(author_name=name, author_email=email, affiliation=aff, title=title,
-                                         reference=ref, description=desc, licence=lic, consent=consent,
-                                         location_check=S.get("location_check", "not_checked"),
-                                         location_comment=S.get("location_comment") or None),
-                                    S.ids, cols, M, meta,
-                                    est=S.est if inc else None, E=S.E if inc else None,
-                                    method=S.get("fill_method"), band=S.get("q"), user=_user(),
-                                    progress=lambda p, t: bar.progress(p, "Sending samples: " + t))
+            if new or meta_changed or "load" in todo:
+                st.write("Project details")
+                store.save_dataset(p, _dataset_meta(), user)
+                S.project = p
+            if new or ("load" in todo and changed.get("load", 0) > saved.get("load", 0)) or \
+                    ("fill" in todo and changed.get("fill", 0) > saved.get("fill", 0)):
+                bar = st.progress(0.0, "Samples")
+                store.save_samples(p, _rows_for_samples(), user, progress=lambda f: bar.progress(f, "Samples"))
+                saved["samples"] = time.time()
+            for step in todo:
+                parts = ["test_scattered", "test_block"] if step == "test" else [step]
+                for part in parts:
+                    if part == "test_block" and not S.get("val_block"):
+                        continue
+                    st.write(f"{STEP_LABEL[step].capitalize()}: settings and results")
+                    params, results = _pack(part)
+                    store.save_step(p, part, params, results, user)
+                saved[step] = time.time()
+            if "test" in todo and not S.get("val_block"):
+                store.delete_step(p, "test_block", user)
+            box.update(label="Saved.", state="complete", expanded=False)
         except Exception as e:
-            bar.empty()
-            st.error(f"Submission failed. {e}")
-            return
-        bar.empty()
-        S.submitted_id = did
-        telemetry.event("submit", {"n_samples": len(X)}, _user())
+            box.update(label="Saving failed.", state="error", expanded=True)
+            st.error(str(e))
+            return False
+    st.query_params.update({"project": p["id"], "key": p["key"]})
+    telemetry.event("save", {"steps": todo, "new": new}, user)
+    st.toast("Saved ✅")
+    return True
+
+
+def project_info():
+    if "project" not in S:
+        return
+    p = S.project
+    st.success(f"Saved project: **{S.get('project_meta', {}).get('title', '')}**")
+    st.markdown("To continue later, keep this page's address (it now contains your project), or note your "
+                "**project code**. Anyone with the code can open the project, so keep it private.")
+    st.code(store.project_code(p), language=None)
+
+
+def save_bar(step):
+    """Save button at the bottom of a step."""
+    st.divider()
+    if not store.enabled():
+        st.caption("Saving is not set up for this installation.")
+        return
+    saved = S.get("saved", {}).get(step, 0)
+    changed = S.get("changed", {}).get("test_scattered" if step == "test" else step, 0)
+    if step == "test":
+        changed = max(changed, S.get("changed", {}).get("test_block", 0))
+    if "project" not in S:
+        with st.form(f"first_save_{step}"):
+            st.markdown(f"**💾 Save your work** – the data and the results of {STEP_LABEL[step]} are stored "
+                        "in the IgneoSuite database, so you can continue later without repeating calculations.")
+            a, b = st.columns(2)
+            title = a.text_input("Dataset name *", key=f"t_{step}")
+            ref = b.text_input("DOI or reference of the compilation", key=f"r_{step}")
+            consent = st.checkbox("I have the right to store these data, and I agree that Octa Insight keeps them in "
+                                  "the IgneoSuite database. *", key=f"c_{step}")
+            go = st.form_submit_button(f"Save {STEP_LABEL[step]}", type="primary")
+        if go:
+            if len(title.strip()) < 3 or not consent:
+                st.error("Please give the dataset a name (at least 3 characters) and tick the consent box.")
+                return
+            S.project_meta = dict(title=title.strip(), reference=ref.strip() or None, consent=True, licence="CC-BY-4.0")
+            if do_save(["load", step] if step != "load" else ["load"]):
+                st.rerun()
+        return
+    c1, c2 = st.columns([1, 3], vertical_alignment="center")
+    go = c1.button(f"💾 Save {STEP_LABEL[step]}", key=f"save_{step}", type="primary")
+    if saved and saved >= changed:
+        c2.caption(f"Saved at {time.strftime('%H:%M', time.localtime(saved))} in project "
+                   f"“{S.get('project_meta', {}).get('title', '')}”.")
+    elif saved:
+        c2.caption("Changed since the last save.")
+    else:
+        c2.caption("Not saved yet.")
+    if go and do_save([step]):
         st.rerun()
+
+
+def open_project_box():
+    if not store.enabled():
+        return
+    with st.expander("📂 Open a saved project"):
+        code = st.text_input("Project code", placeholder="paste the code you got when you saved", key="open_code")
+        if st.button("Open", key="open_btn"):
+            p = store.parse_code(code)
+            if not p:
+                st.error("That does not look like a project code.")
+            else:
+                open_project(p)
+
+
+def open_project(p):
+    user = _user()
+    try:
+        with st.spinner("Opening the saved project…"):
+            out = store.load(p, user)
+    except Exception as e:
+        st.error(f"The project could not be opened. {e}")
+        return False
+    S._pending_open = (p, out)          # applied at the start of the next run, before the sidebar exists
+    telemetry.event("resume", {"last_step": out["dataset"].get("last_step")}, user)
+    st.rerun()
+
+
+def restore(p, out):
+    """Rebuild the session from a saved project."""
+    d, steps, rows = out["dataset"], out["steps"], out["samples"]
+    for k in list(S.keys()):
+        if k not in ("_user", "_sid"):
+            del S[k]
+    cols = list(d.get("variables") or (steps.get("load", {}).get("params", {}).get("variables") or []))
+    meas = pd.DataFrame([r.get("measured") or {} for r in rows]).reindex(columns=cols).astype(float)
+    S.X = meas
+    S.ids = np.array([str(r.get("sample_id")) for r in rows])
+    S.meta = pd.DataFrame({k: [r.get(k) for r in rows] for k in
+                           ("latitude", "longitude", "age_ma", "latitude_original", "longitude_original",
+                            "reference", "comment")})
+    for k in ("latitude", "longitude", "age_ma"):
+        S.meta[k] = pd.to_numeric(S.meta[k]).astype(float)
+    lp = steps.get("load", {})
+    S.id_col = d.get("id_column") or lp.get("params", {}).get("id_column") or "Sample"
+    S.meta_cols = d.get("column_map") or lp.get("params", {}).get("column_map") or {}
+    S.value_cols = cols
+    S.report = lp.get("results", {}).get("report") or dict(
+        n_rows=len(meas), n_cols=len(cols), counts=dict(number=int(meas.notna().values.sum()), recovered=0,
+                                                       missing=int(meas.isna().values.sum()), text=0),
+        text_examples={}, nonpositive={})
+    if d.get("location_check") in LOC_ANSWERS:
+        S.location_check = d["location_check"]
+    if d.get("location_comment"):
+        S.location_comment = d["location_comment"]
+    S.project = p
+    S.project_meta = {k: d.get(k) for k in ("title", "reference", "description", "author_name", "author_email",
+                                            "affiliation", "licence", "shared", "consent")}
+    now = time.time()
+    saved = {"load": now, "samples": now}
+    if "missing" in steps:
+        saved["missing"] = now
+    for part, store_key, pkey in (("test_scattered", "val_scat", "scat_params"), ("test_block", "val_block", "block_params")):
+        if part in steps and steps[part]["results"]:
+            S[store_key] = steps[part]["results"]
+            S[pkey] = steps[part]["params"]
+            saved["test"] = now
+    if "test_scattered" in steps:
+        sp = steps["test_scattered"]["params"]
+        S.methods, S.reps, S.seed = sp.get("methods", []), sp.get("reps", 3), sp.get("seed", 0)
+        S.frac_pct = int(round(100 * sp.get("frac", 0.05)))
+        S.recommended = validate.recommend(S.val_scat["score"])[0]
+    if "test_block" in steps:
+        bp = steps["test_block"]["params"]
+        S.block_names, S.bfrac_pct = bp.get("block", []), int(round(100 * bp.get("frac", 0.1)))
+    if "fill" in steps and any(r.get("estimated") for r in rows):
+        est_df = pd.DataFrame([r.get("estimated") or {} for r in rows]).reindex(columns=cols).astype(float)
+        err_df = pd.DataFrame([r.get("estimate_error") or {} for r in rows]).reindex(columns=cols).astype(float)
+        M = meas.values
+        S.est = np.where(np.isnan(M), est_df.values, M)
+        S.E = np.where(np.isnan(M), err_df.values, np.nan)
+        fp = steps["fill"]["params"]
+        S.fill_method, S.q = fp.get("method"), fp.get("error_band", 0.68)
+        S.F = steps["fill"]["results"].get("error_factors")
+        saved["fill"] = now
+    if "geometry" in steps:
+        S.geo, S.geo_params = steps["geometry"]["results"], steps["geometry"]["params"]
+        saved["geometry"] = now
+    if "clusters" in steps:
+        r, pp = steps["clusters"]["results"], steps["clusters"]["params"]
+        if r.get("k_scan") is not None:
+            S.kscan = r["k_scan"]
+        if r.get("rows") is not None:
+            mask = np.zeros(len(rows), bool); mask[np.asarray(r["rows"], int)] = True
+            S.clu = dict(rows=mask, lr=np.asarray(r["reference_labels"]), lf=np.asarray(r["filled_labels"]),
+                         base=pp.get("reference_variables"), extra=pp.get("filled_variables"), k=pp.get("k"),
+                         P=np.asarray(r["pca_scores"]), ev=np.asarray(r["pca_explained"]))
+        saved["clusters"] = now
+    S.saved = saved
+    S.changed = {}
+    last = d.get("last_step")
+    S.step = STEPS[STEP_PAGES.get(last, 0)]
+    S.resumed = d.get("title")
+    st.query_params.update({"project": p["id"], "key": p["key"]})
 
 
 def page_about():
@@ -684,7 +1055,9 @@ IgneoSuite {__version__} is open-source software from Octa Insight for working w
 **Workflow.** (1) Read the table and recover numbers hidden by stray spaces. (2) Describe where values are missing,
 including elements that are reported together, such as the REE. (3) Hide measured values, estimate them with each method,
 and score the errors, both for scattered gaps and for whole blocks. (4) Fill the gaps with the chosen method and export
-every value as measured, estimated, or ± error. (5) Optionally compare clusters before and after gap-filling.
+every value as measured, estimated, or ± error. (5) Describe the geometry of the data: dimensions, grouping and the
+principal components. (6) Optionally compare clusters before and after gap-filling. (7) Save the project, and share
+it with the IgneoSuite compilation if you wish. Every step can be saved and reopened later.
 
 **Methods.** {"; ".join(f"*{m}*: {d}" for m, (_, d) in METHODS.items())}.
 Model-based methods work on log10-transformed, standardised values.
@@ -692,8 +1065,9 @@ Model-based methods work on log10-transformed, standardised values.
 **Reference.** Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M.
 When simpler wins: recovering the structure of incomplete geochemical data. *Computers & Geosciences* (submitted).
 
-**Privacy.** Your data are stored only if you submit them in step 6, with your consent and under the licence
-you choose. Otherwise they stay in this session. To improve the software, IgneoSuite records anonymous usage
+**Privacy.** Your data are stored only when you press a Save button, with your consent and under the licence you
+choose. Saved projects are private: they can be opened only with their project code (and, later, by their owner
+after signing in). Unsaved work stays in this browser session. To improve the software, IgneoSuite records anonymous usage
 statistics (table size, share missing, methods tested and their error scores), never data values or sample IDs.
 """)
     if telemetry.enabled():
@@ -707,7 +1081,8 @@ statistics (table size, share missing, methods tested and their error scores), n
                 st.success("Thank you, your feedback was sent.") if ok else st.error("Sending failed. Please try again later.")
 
 
-PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, page_cluster, page_submit, page_about]))
+PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, page_geometry, page_cluster, page_save,
+                         page_about]))
 
 
 def render(user=None):
@@ -718,13 +1093,30 @@ def render(user=None):
     """
     S["_user"] = user
     telemetry.session_id()
+    if "_pending_open" in S:
+        p, out = S.pop("_pending_open")
+        restore(p, out)
+    qp = st.query_params
+    if store.enabled() and "project" in qp and "key" in qp and S.get("project", {}).get("id") != qp["project"]             and not S.get("_resume_failed"):
+        p = {"id": qp["project"], "key": qp["key"]}
+        try:
+            with st.spinner("Opening your saved project…"):
+                restore(p, store.load(p, user))
+        except Exception as e:
+            S._resume_failed = True
+            st.error(f"The saved project in this link could not be opened. {e}")
     collect_jobs()
     with st.sidebar:
         st.markdown(f"### IgneoSuite\n<span style='color:#52514e'>{APP_META['tagline']}</span>", unsafe_allow_html=True)
         step = st.radio("Steps", STEPS, key="step", label_visibility="collapsed")
         if "X" in S:
             st.caption(f"{len(S.X):,} samples · {S.X.shape[1]} variables")
+        if "project" in S:
+            st.caption(f"💾 Project: {S.get('project_meta', {}).get('title', '')}")
         if running():
             st.caption("⏳ A test is running (step 3).")
         st.caption(f"v{__version__} · Octa Insight")
+    if S.get("resumed"):
+        st.success(f"Welcome back. The saved project **{S.pop('resumed')}** is open, with the results of every "
+                   "saved step. You are at the last step you saved.")
     PAGES[step]()

@@ -31,8 +31,15 @@ works best, and gives every estimated value its own error. It implements the wor
    Measured values are never changed.
 5. **Clusters** – optional K-means comparison between a small set of measured variables and the
    gap-filled data (share of samples kept, ARI, cross-table, PCA plots).
-6. **Submit to database** – authors can share their dataset (with location and age) with the
-   IgneoSuite compilation.
+6. **Data geometry** – principal components (variance explained, loadings, scores), components needed
+   for 80%/90% of the variance, participation ratio, intrinsic dimension (TwoNN), Hopkins statistic,
+   nearest-neighbour distance relative to a Gaussian cloud, and (with a Reference column) how often a
+   sample's nearest neighbour comes from the same publication.
+7. **Clusters** – optional K-means comparison (as before).
+8. **Save & share** – every step has a Save button. Saving creates a private project in the database with
+   the data and the settings and results of each saved step (statistics, tables and the data behind every
+   figure), so the work can be reopened later from its link or project code without recalculating.
+   Authors can choose to share the dataset with the IgneoSuite compilation.
 
 Model-based methods work on log10-transformed, standardised values (linear scale for any variable with
 zero or negative values).
@@ -44,7 +51,18 @@ pip install -r requirements.txt     # drop the torch line to skip DAE and GAIN
 streamlit run app.py
 ```
 
-## Author submissions (Supabase)
+## Saved projects (Supabase)
+
+* `IgneoSuite_datasets` – one row per project: name, DOI/reference of the compilation, description,
+  licence, consent, sharing choice and review status, column mapping, location check.
+* `IgneoSuite_samples` – one row per sample (ID, location, age, reference, comment, measured values,
+  estimated values and their errors).
+* `IgneoSuite_steps` – one row per saved step (`load`, `missing`, `test_scattered`, `test_block`, `fill`,
+  `geometry`, `clusters`) with its settings (`params`) and everything it produced (`results`).
+* Access: all reads and writes go through the `igneosuite_*` database functions, which require the
+  project's private key (only its SHA-256 hash is stored) or, once sign-in exists, the owner's account.
+
+## Author submissions (earlier version)
 
 Step 6 lets authors submit their dataset to the IgneoSuite database in the Octa Insight Supabase project
 (`Octa_projects`), with their name, email, affiliation, title, reference, licence and consent.

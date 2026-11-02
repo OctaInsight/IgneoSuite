@@ -140,3 +140,28 @@ def describe_seconds(lo, hi) -> str:
     if hi < 20:
         return "less than half a minute"
     return f"about {f(lo)} to {f(hi)}"
+
+
+QUANTILES = (0.68, 0.90, 0.95)
+
+
+def compact(long: pd.DataFrame, max_points: int = 1500, seed: int = 0) -> dict:
+    """Everything later steps and figures need from a test, small enough to store.
+
+    score    – summary per method (table and bar chart)
+    pervar   – median |log10 error| per variable (rows) and method (columns)
+    q        – per quantile: |log10 error| quantile per variable and method (error bands in step 4)
+    counts   – hidden cells per variable and method
+    sample   – up to `max_points` hidden cells per method (measured-vs-estimated figure)
+    """
+    if long.empty:
+        return {}
+    order = list(dict.fromkeys(long.variable))
+    pervar = long.groupby(["variable", "method"]).log_err.median().unstack(1).reindex(order)
+    q = {f"{x:.2f}": long.groupby(["variable", "method"]).log_err.quantile(x).unstack(1).reindex(order)
+         for x in QUANTILES}
+    counts = long.groupby(["variable", "method"]).log_err.count().unstack(1).reindex(order)
+    ok = long[(long.true > 0) & (long.estimate > 0)]
+    sample = pd.concat([d.sample(min(len(d), max_points), random_state=seed) for _, d in ok.groupby("method")]
+                       )[["method", "variable", "true", "estimate"]].reset_index(drop=True)
+    return dict(score=score(long), pervar=pervar, q=q, counts=counts, sample=sample)

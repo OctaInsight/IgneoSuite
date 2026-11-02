@@ -4,19 +4,22 @@ import numpy as np
 import pandas as pd
 
 
-def error_factors(long_scat: pd.DataFrame, long_block: pd.DataFrame | None, method: str,
-                  columns: list[str], q: float = 0.68) -> pd.DataFrame:
-    """Per variable: q-th percentile of |log10 error| (scattered and, where tested, block)."""
-    rows = []
-    for c in columns:
-        s = long_scat[(long_scat.method == method) & (long_scat.variable == c)].log_err.dropna()
-        b = (long_block[(long_block.method == method) & (long_block.variable == c)].log_err.dropna()
-             if long_block is not None and not long_block.empty else pd.Series(dtype=float))
-        rows.append(dict(variable=c,
-                         q_scattered=s.quantile(q) if len(s) else np.nan,
-                         q_block=b.quantile(q) if len(b) else np.nan,
-                         n_scattered=len(s), n_block=len(b)))
-    t = pd.DataFrame(rows).set_index("variable")
+def error_factors(test_s: dict, test_b: dict | None, method: str, columns: list[str], q: float = 0.68) -> pd.DataFrame:
+    """Per variable: q-th percentile of |log10 error| from the scattered test and, where tested, the block test.
+
+    `test_s` and `test_b` are compact test results (validate.compact)."""
+    key = f"{q:.2f}"
+
+    def col(test):
+        if not test or method not in test["q"][key]:
+            return pd.Series(np.nan, index=columns), pd.Series(0, index=columns)
+        return (test["q"][key][method].reindex(columns).astype(float),
+                test["counts"][method].reindex(columns).fillna(0).astype(int))
+
+    qs, ns = col(test_s)
+    qb, nb = col(test_b)
+    t = pd.DataFrame({"q_scattered": qs, "q_block": qb, "n_scattered": ns, "n_block": nb}, index=columns)
+    t.index.name = "variable"
     fallback = np.nanmedian(t.q_scattered) if t.q_scattered.notna().any() else np.nan
     t["q_scattered"] = t.q_scattered.fillna(fallback)
     return t

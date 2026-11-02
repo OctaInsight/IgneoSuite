@@ -1,6 +1,6 @@
 [project]
 name = "igneosuite"
-version = "0.1.0"
+version = "0.2.0"
 description = "Gap-filling and data tools for incomplete igneous geochemical data"
 requires-python = ">=3.10"
 license = { text = "MIT" }

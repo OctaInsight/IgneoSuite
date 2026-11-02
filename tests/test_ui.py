@@ -37,11 +37,12 @@ def test_pages():
         time.sleep(1); at.run()
         if "val_block" in at.session_state:
             break
-    assert "val_block" in at.session_state and not at.session_state["val_block"].empty
+    assert "val_block" in at.session_state and at.session_state["val_block"]
     assert any("ready to go to" in s.value for s in at.success)
     at.sidebar.radio[0].set_value("4 · Fill and export").run(); assert not at.exception
     at.button[0].click().run(); assert not at.exception and "est" in at.session_state
-    at.sidebar.radio[0].set_value("5 · Clusters").run(); assert not at.exception
+    at.sidebar.radio[0].set_value("6 · Clusters").run(); assert not at.exception
     at.button[1].click().run(); assert not at.exception and "clu" in at.session_state
-    at.sidebar.radio[0].set_value("6 · Submit to database").run(); assert not at.exception
+    for step in ["5 · Data geometry", "7 · Save & share"]:
+        at.sidebar.radio[0].set_value(step).run(); assert not at.exception, step
     at.sidebar.radio[0].set_value("About").run(); assert not at.exception

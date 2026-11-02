@@ -70,6 +70,8 @@ META_NAMES = {
     "longitude": {"lon", "long", "lng", "longitude", "lon (°)", "long (°)", "longitude (°)", "longitude (deg)",
                   "longitude (e)", "long.", "x", "lengdegrad"},
     "age_ma": {"age", "age (ma)", "age ma", "age_ma", "age(ma)", "age [ma]", "ma"},
+    "reference": {"reference", "ref", "ref.", "source", "citation", "publication", "doi"},
+    "comment": {"comment", "comments", "remark", "remarks", "note", "notes"},
 }
 
 
