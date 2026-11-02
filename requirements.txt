@@ -1,0 +1,9 @@
+streamlit>=1.40
+numpy>=1.26
+pandas>=2.1
+scikit-learn>=1.4
+scipy>=1.11
+matplotlib>=3.8
+openpyxl>=3.1
+# Optional, for the deep-learning methods (DAE, GAIN). Remove to keep the install small.
+torch>=2.2
