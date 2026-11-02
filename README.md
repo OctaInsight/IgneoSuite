@@ -35,6 +35,18 @@ pip install -r requirements.txt     # drop the torch line to skip DAE and GAIN
 streamlit run app.py
 ```
 
+## Usage records (Supabase)
+
+If Supabase settings are present, the app records anonymous usage in three tables in the
+Octa Insight Supabase project (`Octa_projects`): `IgneoSuite_runs` (one row per method test: table size,
+share missing, methods, scores), `IgneoSuite_events` (steps used) and `IgneoSuite_feedback` (the form on the
+About page). No data values or sample IDs are ever sent. The table definitions are in
+`supabase/migrations/`. Anonymous visitors can only add rows; they cannot read, change or delete any.
+
+To switch it on, copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` (local) or paste its
+contents into *App settings → Secrets* on Streamlit Community Cloud. Without it the app runs the same and
+records nothing.
+
 ## Tests
 
 ```bash
@@ -61,7 +73,9 @@ igneosuite/errors.py   element-specific errors for each estimate
 igneosuite/export.py   Excel and CSV output
 igneosuite/cluster.py  optional K-means comparison
 igneosuite/plots.py    figures (paper colours, no text below 7 pt)
+igneosuite/telemetry.py anonymous usage records and feedback (Supabase)
 igneosuite/ui.py       interface; render(user=None) for the future portal
+supabase/migrations/   SQL for the IgneoSuite_ tables
 portal/README.md       plan for the Octa Insight portal (Supabase)
 ```
 

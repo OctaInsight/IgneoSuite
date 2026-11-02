@@ -6,13 +6,18 @@ import streamlit as st
 
 from . import __version__
 from .io import read_table, clean_table, guess_columns, REE, short_name
-from . import diagnose, validate, errors, export, cluster, plots
+from . import diagnose, validate, errors, export, cluster, plots, telemetry
+import time
 from .imputers import METHODS, available_methods, impute, DEEP, HAS_TORCH
 
 APP_META = dict(id="igneosuite", name="IgneoSuite", tagline="Gap-filling for incomplete igneous geochemistry",
                 version=__version__)
 STEPS = ["1 · Load data", "2 · Missing values", "3 · Test methods", "4 · Fill and export", "5 · Clusters", "About"]
 S = st.session_state
+
+
+def _user():
+    return S.get("_user")
 
 
 def _img(fig, caption=None):
@@ -61,6 +66,10 @@ def page_load():
     if st.button("Read values", type="primary", disabled=not value_cols):
         X, ids, rep = clean_table(raw, id_col, value_cols)
         S.update(X=X, ids=ids, report=rep, id_col=id_col, value_cols=value_cols)
+        sm = diagnose.summary(X)
+        telemetry.event("load", dict(n_samples=sm["n_samples"], n_variables=sm["n_variables"],
+                                     pct_missing=round(sm["pct_missing"], 2), n_complete=sm["n_complete"],
+                                     recovered=rep["counts"]["recovered"]), _user())
         for k in ("val_scat", "val_block", "est", "E"):
             S.pop(k, None)
     if "X" in S:
@@ -147,7 +156,7 @@ def page_validate():
     bfrac = st.slider("Block test: share of eligible samples (%)", 2, 30, 10) / 100
     if st.button("Run tests", type="primary", disabled=not methods):
         S.methods, S.reps, S.block_names = methods, reps, block
-        bar = st.progress(0.0, "Starting")
+        bar = st.progress(0.0, "Starting"); t0 = time.time()
         S.val_scat = validate.run(M, cols, methods, "scattered", frac, reps=reps, seed0=seed,
                                   progress=lambda p, t: bar.progress(p * (0.5 if block else 1), "Scattered test: " + t))
         bidx = [cols.index(b) for b in block]
@@ -157,6 +166,16 @@ def page_validate():
         bar.empty()
         for k in ("est", "E"):
             S.pop(k, None)
+        sm = diagnose.summary(X)
+        sc = {"scattered": validate.score(S.val_scat).round(4).to_dict(orient="index")}
+        if not S.val_block.empty:
+            sc["block"] = validate.score(S.val_block).round(4).to_dict(orient="index")
+        telemetry.run(dict(n_samples=sm["n_samples"], n_variables=sm["n_variables"],
+                           pct_missing=round(sm["pct_missing"], 2), n_complete=sm["n_complete"],
+                           methods=methods, repetitions=int(reps), scattered_frac=frac,
+                           block_frac=bfrac if block else None, block_variables=[short_name(b) for b in block],
+                           recommended_method=validate.recommend(validate.score(S.val_scat))[0],
+                           scores=sc, duration_s=round(time.time() - t0, 1)), _user())
     if "val_scat" not in S:
         return
     tabs = st.tabs(["Scattered gaps", "Block gaps"])
@@ -202,6 +221,7 @@ def page_fill():
         F = errors.error_factors(S.val_scat, S.val_block, method, cols, q)
         E = errors.error_matrix(M, est, cols, F, bidx)
         S.update(est=est, E=E, F=F, fill_method=method, q=q)
+        telemetry.event("fill", dict(method=method, q=q, n_estimated=int((np.isnan(M) & np.isfinite(est)).sum())), _user())
     if "est" not in S:
         return
     est, E, F = S.est, S.E, S.F
@@ -227,8 +247,10 @@ def page_fill():
         sheets["Test_block"] = validate.score(S.val_block)
     c = st.columns(2)
     c[0].download_button("Download Excel workbook", export.to_excel(sheets, notes), "igneosuite_results.xlsx",
-                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
-    c[1].download_button("Download complete matrix (CSV)", comp.to_csv(index=False).encode(), "igneosuite_complete.csv", "text/csv")
+                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary",
+                         on_click=telemetry.event, args=("export", {"format": "xlsx"}, _user()))
+    c[1].download_button("Download complete matrix (CSV)", comp.to_csv(index=False).encode(), "igneosuite_complete.csv", "text/csv",
+                         on_click=telemetry.event, args=("export", {"format": "csv"}, _user()))
 
 
 # ---------------------------------------------------------------- 5 clusters
@@ -261,6 +283,8 @@ def page_cluster():
         Zf = cluster.prepare(S.est[rows][:, ei])
         lf = cluster.match_labels(lr, cluster.kmeans(Zf, k))
         S.clu = dict(rows=rows, Zr=Zr, Zf=Zf, lr=lr, lf=lf, base=base, extra=extra)
+        telemetry.event("cluster", dict(k=k, n_reference_vars=len(base), n_filled_vars=len(extra),
+                                        same_cluster_pct=round(float(100 * np.mean(lr == lf)), 2)), _user())
     if "clu" in S:
         c = S.clu
         from sklearn.metrics import adjusted_rand_score
@@ -298,15 +322,32 @@ Model-based methods work on log10-transformed, standardised values.
 **Reference.** Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M.
 When simpler wins: recovering the structure of incomplete geochemical data. *Computers & Geosciences* (submitted).
 
-Uploaded data stay in this session and are not stored.
+**Privacy.** Uploaded data stay in this session and are never stored. To improve the software, IgneoSuite
+records anonymous usage statistics: table size, share missing, methods tested and their error scores.
+No data values or sample IDs are sent.
 """)
+    if telemetry.enabled():
+        with st.form("feedback", clear_on_submit=True):
+            st.subheader("Send feedback")
+            rating = st.select_slider("How useful was IgneoSuite?", options=[1, 2, 3, 4, 5], value=4)
+            msg = st.text_area("Comments, problems or ideas", max_chars=4000)
+            email = st.text_input("Email (optional, if you would like a reply)")
+            if st.form_submit_button("Send"):
+                ok = telemetry.feedback(rating, msg, email.strip() or None, _user())
+                st.success("Thank you, your feedback was sent.") if ok else st.error("Sending failed. Please try again later.")
 
 
 PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, page_cluster, page_about]))
 
 
 def render(user=None):
-    """Draw the app. `user` is reserved for the Octa Insight portal (None = open use)."""
+    """Draw the app. `user` is reserved for the Octa Insight portal (None = open use).
+
+    A portal passes an object with `.id` (Supabase auth user id) and `.access_token`; usage rows are then
+    stored under that user. With `user=None` rows are anonymous.
+    """
+    S["_user"] = user
+    telemetry.session_id()
     with st.sidebar:
         st.markdown(f"### IgneoSuite\n<span style='color:#52514e'>{APP_META['tagline']}</span>", unsafe_allow_html=True)
         step = st.radio("Steps", STEPS, key="step", label_visibility="collapsed")
