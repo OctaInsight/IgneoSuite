@@ -132,6 +132,15 @@ supabase/migrations/   SQL for the IgneoSuite_ tables
 portal/README.md       plan for the Octa Insight portal (Supabase)
 ```
 
+## How to cite
+
+Please cite the paper and the software (GitHub's "Cite this repository" button uses `CITATION.cff`):
+
+> Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M., 2026. When simpler
+> wins: recovering the structure of incomplete geochemical data. Computers & Geosciences (submitted).
+
+> Octa Insight, 2026. IgneoSuite, version 1.0.0 [software]. Octa Systems. https://github.com/OctaInsight/IgneoSuite
+
 ## Licence
 
 Copyright (C) 2026 Octa Insight. Produced by Octa Systems.

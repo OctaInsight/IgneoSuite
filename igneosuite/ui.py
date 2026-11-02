@@ -1123,8 +1123,11 @@ GNU Affero General Public License, version 3 only (AGPL-3.0-only). It comes with
 of the version you are using is at [github.com/OctaInsight/IgneoSuite](https://github.com/OctaInsight/IgneoSuite).
 © 2026 Octa Insight. Produced by Octa Systems.
 
-**Reference.** Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M.
-When simpler wins: recovering the structure of incomplete geochemical data. *Computers & Geosciences* (submitted).
+**How to cite.** Please cite the paper and the software (the sidebar has copy buttons and a BibTeX file):
+
+{CITE_PAPER}
+
+{cite_software()}
 
 **Privacy.** Your data are stored only when you press a Save button, under the licence you
 choose. Saved projects are private: they can be opened only with their project code (and, later, by their owner
@@ -1149,9 +1152,40 @@ PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, pag
 SOURCE_URL = "https://github.com/OctaInsight/IgneoSuite"
 
 
+CITE_PAPER = ("Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M., 2026. "
+              "When simpler wins: recovering the structure of incomplete geochemical data. "
+              "Computers & Geosciences (submitted).")
+
+
+def cite_software():
+    return (f"Octa Insight, 2026. IgneoSuite, version {__version__} [software]. Octa Systems. "
+            f"{SOURCE_URL}")
+
+
+def _bibtex():
+    return (
+        "@article{AbuAlam2026simpler,\n"
+        "  author  = {Abu-Alam, Tamer S. and G{\\\"u}zey, Alparslan and Khalil, Thoraya T. and Abu-Anber, Mohamed and\n"
+        "             Said, Ahmed and Abu-Alam, Nour El-Din T. and Ghoneim, Mohamed},\n"
+        "  title   = {When simpler wins: recovering the structure of incomplete geochemical data},\n"
+        "  journal = {Computers \\& Geosciences},\n  year    = {2026},\n  note    = {Submitted}\n}\n\n"
+        "@software{IgneoSuite,\n"
+        "  author    = {{Octa Insight}},\n  title     = {IgneoSuite},\n"
+        f"  version   = {{{__version__}}},\n  year      = {{2026}},\n  publisher = {{Octa Systems}},\n"
+        f"  license   = {{AGPL-3.0-only}},\n  url       = {{{SOURCE_URL}}}\n}}\n")
+
+
 def _sidebar_footer():
     from pathlib import Path
     st.divider()
+    st.markdown("<style>[data-testid='stSidebar'] pre, [data-testid='stSidebar'] pre code"
+                "{font-size:0.72rem !important;line-height:1.35 !important;font-family:'Source Sans Pro',"
+                "Arial,sans-serif !important}</style>", unsafe_allow_html=True)
+    st.markdown("**📖 How to cite**")
+    st.caption("If IgneoSuite helps your work, please cite the paper and the software:")
+    st.code(CITE_PAPER, language=None, wrap_lines=True)
+    st.code(cite_software(), language=None, wrap_lines=True)
+    st.download_button("⬇ BibTeX", _bibtex().encode(), "IgneoSuite_citation.bib", "text/plain", key="cite_bib")
     st.markdown(
         f"<div style='font-size:0.82rem;line-height:1.5;color:#52514e'>"
         f"<b style='color:#0b0b0b'>IgneoSuite {__version__}</b> · Octa Insight<br>"
