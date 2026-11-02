@@ -53,6 +53,8 @@ def run(M: np.ndarray, columns: list[str], methods: list[str], scenario: str = "
         ii, jj = np.where(hide)
         true = M[ii, jj]
         for m in methods:
+            if progress:
+                progress(step / total, f"running {m}, repetition {r + 1} of {reps}")
             t0 = time.time()
             est_full = impute(Mm, m, seed=seed0 + r)
             dt = time.time() - t0
@@ -62,7 +64,7 @@ def run(M: np.ndarray, columns: list[str], methods: list[str], scenario: str = "
                                          true=true, estimate=est, log_err=err, seconds=dt)))
             step += 1
             if progress:
-                progress(step / total, f"{m}, repetition {r + 1} of {reps}")
+                progress(step / total, f"{m} finished, repetition {r + 1} of {reps}")
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 
 
@@ -117,3 +119,24 @@ def recommend(table: pd.DataFrame, tolerance: float = 0.01) -> tuple[str, str]:
                f"and runs faster, so it is recommended.")
         return fast, why
     return best, f"{best} gave the lowest median error."
+
+
+# Seconds per run measured on 2,737 samples x 45 variables (one CPU core of a laptop), and how each
+# method scales with the number of samples (a) and variables (b).
+_BASE = {"Mean": (0.01, 1, 1), "Median": (0.02, 1, 1), "KNN": (1.5, 2, 1), "MICE": (7, 1, 2),
+         "missForest": (110, 1.1, 2), "DAE": (30, 1, 1), "GAIN": (25, 0.3, 1)}
+
+
+def estimate_seconds(methods, n, p, reps) -> tuple[float, float]:
+    """Rough range (low, high) of the time one test takes, in seconds."""
+    t = sum(_BASE.get(m, (10, 1, 1))[0] * (n / 2737) ** _BASE.get(m, (10, 1, 1))[1]
+            * (p / 45) ** _BASE.get(m, (10, 1, 1))[2] for m in methods) * reps
+    return t, t * 3      # web servers are often slower than a laptop
+
+
+def describe_seconds(lo, hi) -> str:
+    def f(x):
+        return f"{x:.0f} seconds" if x < 90 else f"{x / 60:.0f} minutes" if x < 5400 else f"{x / 3600:.1f} hours"
+    if hi < 20:
+        return "less than half a minute"
+    return f"about {f(lo)} to {f(hi)}"

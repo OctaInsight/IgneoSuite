@@ -7,7 +7,8 @@ import streamlit as st
 from . import __version__
 from .io import read_table, clean_table, guess_columns, guess_meta, read_meta, REE, short_name
 from . import submit as submit_mod
-from . import diagnose, validate, errors, export, cluster, plots, telemetry
+from . import diagnose, validate, errors, export, cluster, plots, telemetry, jobs
+from .facts import FACTS
 import time
 from .imputers import METHODS, available_methods, impute, DEEP, HAS_TORCH
 
@@ -297,59 +298,187 @@ def page_diagnose():
 
 
 # ---------------------------------------------------------------- 3 validate
+TEST_NAMES = {"scat": "scattered-gap test", "block": "block test"}
+
+
+def _job_key(kind):
+    return f"{telemetry.session_id()}:{kind}"
+
+
+def collect_jobs():
+    """Move finished background tests into the session (runs on every page)."""
+    for kind, store in (("scat", "val_scat"), ("block", "val_block")):
+        job = jobs.get(_job_key(kind))
+        if not job or job["status"] == "running":
+            continue
+        jobs.pop(_job_key(kind))
+        if job["status"] == "done":
+            S[store] = job["result"]
+            S[f"{kind}_seconds"] = job["finished"] - job["started"]
+            S[f"{kind}_just_done"] = True
+            for k in ("est", "E"):
+                S.pop(k, None)
+            _log_run(kind, job)
+        elif job["status"] == "error":
+            S[f"{kind}_error"] = job["error"]
+        else:
+            S[f"{kind}_error"] = "The test was stopped."
+
+
+def _log_run(kind, job):
+    try:
+        long = job["result"]; info = job["info"]
+        sm = diagnose.summary(S.X)
+        sc = {("scattered" if kind == "scat" else "block"): validate.score(long).round(4).to_dict(orient="index")}
+        telemetry.run(dict(n_samples=sm["n_samples"], n_variables=sm["n_variables"],
+                           pct_missing=round(sm["pct_missing"], 2), n_complete=sm["n_complete"],
+                           methods=info["methods"], repetitions=int(info["reps"]),
+                           scattered_frac=info["frac"] if kind == "scat" else None,
+                           block_frac=info["frac"] if kind == "block" else None,
+                           block_variables=[short_name(b) for b in info.get("block", [])],
+                           recommended_method=validate.recommend(validate.score(long))[0] if not long.empty else None,
+                           scores=sc, duration_s=round(job["finished"] - job["started"], 1)), _user())
+    except Exception:
+        pass
+
+
+def running(kind=None):
+    kinds = [kind] if kind else ["scat", "block"]
+    return any((j := jobs.get(_job_key(k))) and j["status"] == "running" for k in kinds)
+
+
+def _fmt_time(sec):
+    sec = int(sec)
+    return f"{sec // 60} min {sec % 60:02d} s" if sec >= 60 else f"{sec} s"
+
+
+@st.fragment(run_every=2)
+def progress_panel(kind):
+    """Live status of a running test, with rotating facts. Reruns the page when the test ends."""
+    job = jobs.get(_job_key(kind))
+    if not job:
+        return
+    if job["status"] != "running":
+        st.rerun(scope="app")
+        return
+    el = time.time() - job["started"]
+    st.progress(job["progress"], f"{TEST_NAMES[kind].capitalize()}: {job['text']}")
+    st.markdown(f"**Working…** {_fmt_time(el)} so far. Expected: {job['eta']}.")
+    st.warning("Please do not refresh, close or reload this page: the calculation would start again from "
+               "scratch. You may look at other steps meanwhile; the test keeps running.")
+    fact = FACTS[(int(el // 8) + job.get("fact0", 0)) % len(FACTS)]
+    st.info(f"💡 {fact}")
+    if st.button("Stop this test", key=f"stop_{kind}",
+                 help="Stops after the method that is running now has finished."):
+        jobs.cancel(_job_key(kind))
+        st.toast("Stopping after the current method finishes…")
+
+
+def _start(kind, M, cols, methods, scenario, frac, bidx, reps, seed, info, eta):
+    S.pop(f"{kind}_error", None)
+    job = jobs.start(_job_key(kind), validate.run, M.copy(), cols, list(methods), scenario, frac,
+                     block_cols=bidx, reps=int(reps), seed0=int(seed))
+    job["info"] = info
+    job["eta"] = eta
+    job["fact0"] = int(np.random.default_rng().integers(len(FACTS)))
+
+
 def page_validate():
     _need("X", "Load data first (step 1).")
     X = S.X; M = X.values.astype(float); cols = list(X.columns)
     st.header("Test the methods on your data")
     st.write("Measured values are hidden, estimated, and compared with the true values. "
-             "Error is |log10(estimate / true)|, summarised as the median over variables of each variable's median error: 0.1 means a typical estimate is within a factor of 1.26.")
+             "Error is |log10(estimate / true)|, summarised as the median over variables of each variable's "
+             "median error: 0.1 means a typical estimate is within a factor of 1.26.")
+    busy = running()
     avail = available_methods()
     default = [m for m in ["Median", "KNN", "MICE"] if m in avail]
-    methods = st.multiselect("Methods", avail, default=S.get("methods", default),
+    methods = st.multiselect("Methods", avail, default=S.get("methods", default), disabled=busy,
                              help="\n".join(f"{m}: {METHODS[m][1]}" for m in avail))
     if not HAS_TORCH:
         st.caption("DAE and GAIN need PyTorch (`pip install torch`).")
-    if any(m in DEEP for m in methods) or "missForest" in methods:
-        st.caption("missForest, DAE and GAIN take from seconds to several minutes per run on a few thousand samples.")
     c = st.columns(3)
-    reps = c[0].number_input("Repetitions", 1, 10, S.get("reps", 3))
-    frac = c[1].slider("Scattered test: share of measured values hidden (%)", 1, 20, 5) / 100
-    seed = c[2].number_input("Random seed", 0, 10_000, 0)
-    ree_default = [x for x in cols if short_name(x) in REE]
-    block = st.multiselect("Block test: variables hidden together", cols, default=S.get("block_names", ree_default),
-                           help="Default is the REE. The block is hidden in samples that have all of it.")
-    bfrac = st.slider("Block test: share of eligible samples (%)", 2, 30, 10) / 100
-    if st.button("Run tests", type="primary", disabled=not methods):
-        S.methods, S.reps, S.block_names = methods, reps, block
-        bar = st.progress(0.0, "Starting"); t0 = time.time()
-        S.val_scat = validate.run(M, cols, methods, "scattered", frac, reps=reps, seed0=seed,
-                                  progress=lambda p, t: bar.progress(p * (0.5 if block else 1), "Scattered test: " + t))
-        bidx = [cols.index(b) for b in block]
-        S.val_block = (validate.run(M, cols, methods, "block", bfrac, bidx, reps, seed,
-                                    progress=lambda p, t: bar.progress(0.5 + 0.5 * p, "Block test: " + t))
-                       if block else pd.DataFrame())
-        bar.empty()
-        for k in ("est", "E"):
+    reps = c[0].number_input("Repetitions", 1, 10, S.get("reps", 3), disabled=busy)
+    seed = c[2].number_input("Random seed", 0, 10_000, S.get("seed", 0), disabled=busy)
+
+    # ---- test 1: scattered gaps
+    st.subheader("Test 1 · Scattered gaps")
+    frac = st.slider("Share of measured values hidden (%)", 1, 20, S.get("frac_pct", 5), disabled=busy) / 100
+    lo, hi = validate.estimate_seconds(methods, len(X), len(cols), reps)
+    eta = validate.describe_seconds(lo, hi)
+    b1, m1 = st.columns([1, 3], vertical_alignment="top")
+    go1 = b1.button("Run test 1", type="primary", disabled=not methods or busy, key="run_scat")
+    with m1:
+        if running("scat"):
+            progress_panel("scat")
+        elif S.get("scat_error"):
+            st.error(f"Test 1 did not finish: {S.scat_error}")
+        elif S.pop("scat_just_done", False):
+            st.success(f"✅ Test 1 is complete ({_fmt_time(S.get('scat_seconds', 0))}). "
+                       "Next: run test 2 (block gaps) below, or go straight to step 4.")
+        elif "val_scat" in S:
+            st.success("✅ Test 1 is complete.")
+        elif methods:
+            st.info(f"⏱️ This may take {eta} with the methods you chose and {len(X):,} samples × {len(cols)} "
+                    "variables. Slower methods (missForest, DAE, GAIN) and larger tables take longer. "
+                    "While it runs, please do not refresh or close the page.")
+    if go1:
+        S.methods, S.reps, S.seed, S.frac_pct = methods, reps, seed, int(round(frac * 100))
+        for k in ("val_scat", "val_block", "scat_error", "block_error"):
             S.pop(k, None)
-        sm = diagnose.summary(X)
-        sc = {"scattered": validate.score(S.val_scat).round(4).to_dict(orient="index")}
-        if not S.val_block.empty:
-            sc["block"] = validate.score(S.val_block).round(4).to_dict(orient="index")
-        telemetry.run(dict(n_samples=sm["n_samples"], n_variables=sm["n_variables"],
-                           pct_missing=round(sm["pct_missing"], 2), n_complete=sm["n_complete"],
-                           methods=methods, repetitions=int(reps), scattered_frac=frac,
-                           block_frac=bfrac if block else None, block_variables=[short_name(b) for b in block],
-                           recommended_method=validate.recommend(validate.score(S.val_scat))[0],
-                           scores=sc, duration_s=round(time.time() - t0, 1)), _user())
-    if "val_scat" not in S:
+        _start("scat", M, cols, methods, "scattered", frac, None, reps, seed,
+               dict(methods=methods, reps=reps, frac=frac), eta)
+        telemetry.event("test", {"kind": "scattered", "methods": methods, "reps": int(reps)}, _user())
+        st.rerun()
+
+    # ---- test 2: block gaps
+    st.subheader("Test 2 · Block gaps")
+    ree_default = [x for x in cols if short_name(x) in REE]
+    block = st.multiselect("Variables hidden together", cols, default=S.get("block_names", ree_default),
+                           disabled=busy, help="Default is the REE. The block is hidden in samples that have all of it.")
+    bfrac = st.slider("Share of eligible samples (%)", 2, 30, S.get("bfrac_pct", 10), disabled=busy) / 100
+    n_elig = int((~np.isnan(M[:, [cols.index(b) for b in block]])).all(1).sum()) if block else 0
+    ready1 = "val_scat" in S
+    b2, m2 = st.columns([1, 3], vertical_alignment="top")
+    go2 = b2.button("Run test 2", type="primary", key="run_block",
+                    disabled=busy or not ready1 or not block or n_elig == 0)
+    with m2:
+        if running("block"):
+            progress_panel("block")
+        elif S.get("block_error"):
+            st.error(f"Test 2 did not finish: {S.block_error}")
+        elif S.pop("block_just_done", False) or ("val_block" in S and not S.val_block.empty):
+            st.success("✅ Both tests are complete. You are ready to go to **step 4 · Fill and export**.")
+        elif not ready1:
+            st.info("Run test 1 first. Test 2 uses the same methods and repetitions.")
+        elif not block:
+            st.info("Choose the variables that are usually reported together (for example the REE).")
+        elif n_elig == 0:
+            st.warning("No sample has all of these variables measured, so this block cannot be tested.")
+        else:
+            lo2, hi2 = validate.estimate_seconds(S.get("methods", methods), int(n_elig * bfrac) + len(X), len(cols),
+                                                 S.get("reps", reps))
+            st.info(f"⏱️ Test 1 is done. Test 2 hides the {len(block)} chosen variables together in "
+                    f"{int(n_elig * bfrac)} of the {n_elig} samples that have all of them. It may take "
+                    f"{validate.describe_seconds(lo2, hi2)}. Please do not refresh or close the page while it runs.")
+    if go2:
+        S.block_names, S.bfrac_pct = block, int(round(bfrac * 100))
+        S.pop("val_block", None); S.pop("block_error", None)
+        lo2, hi2 = validate.estimate_seconds(S.methods, len(X), len(cols), S.reps)
+        _start("block", M, cols, S.methods, "block", bfrac, [cols.index(b) for b in block], S.reps, S.get("seed", 0),
+               dict(methods=S.methods, reps=S.reps, frac=bfrac, block=block), validate.describe_seconds(lo2, hi2))
+        telemetry.event("test", {"kind": "block", "methods": S.methods, "reps": int(S.reps)}, _user())
+        st.rerun()
+
+    # ---- results
+    have = [(k, n) for k, n in (("val_scat", "Test 1 · Scattered gaps"), ("val_block", "Test 2 · Block gaps"))
+            if k in S and not S[k].empty]
+    if not have:
         return
-    tabs = st.tabs(["Scattered gaps", "Block gaps"])
-    for tab, key in zip(tabs, ["val_scat", "val_block"]):
+    st.subheader("Results")
+    for tab, (key, name) in zip(st.tabs([n for _, n in have]), have):
         with tab:
             long = S[key]
-            if long.empty:
-                st.write("Not run (no block variables chosen, or no sample has the whole block measured).")
-                continue
             tb = validate.score(long)
             st.dataframe(_fmt(tb, 3), width='stretch')
             _img(plots.method_bars(tb))
@@ -358,7 +487,7 @@ def page_validate():
             _img(plots.true_vs_est(long, m))
     rec_s, why_s = validate.recommend(validate.score(S.val_scat))
     msg = f"**Recommended method: {rec_s}.** {why_s}"
-    if not S.val_block.empty:
+    if "val_block" in S and not S.val_block.empty:
         rec_b, _ = validate.recommend(validate.score(S.val_block))
         if rec_b != rec_s:
             msg += f" For the block test, {rec_b} did best; weigh the two by how your data are missing (step 2)."
@@ -371,6 +500,10 @@ def page_fill():
     _need("X", "Load data first (step 1).")
     X = S.X; M = X.values.astype(float); cols = list(X.columns)
     st.header("Fill the gaps and export")
+    if running():
+        st.info("A test from step 3 is still running. Its progress is shown in step 3; this page will be ready "
+                "when it finishes. Please do not refresh or close the page.")
+        st.stop()
     if "val_scat" not in S:
         st.warning("Run the tests in step 3 first. They provide the error for every estimate.")
         st.stop()
@@ -383,7 +516,7 @@ def page_fill():
         with st.spinner(f"Running {method}"):
             est = impute(M, method, seed=0)
         bidx = [cols.index(b) for b in S.get("block_names", [])]
-        F = errors.error_factors(S.val_scat, S.val_block, method, cols, q)
+        F = errors.error_factors(S.val_scat, S.get("val_block", pd.DataFrame()), method, cols, q)
         E = errors.error_matrix(M, est, cols, F, bidx)
         S.update(est=est, E=E, F=F, fill_method=method, q=q)
         telemetry.event("fill", dict(method=method, q=q, n_estimated=int((np.isnan(M) & np.isfinite(est)).sum())), _user())
@@ -408,7 +541,7 @@ def page_fill():
     summary_s = validate.score(S.val_scat)
     sheets = {"Measured_estimated_error": three, "Complete_matrix": comp,
               "Error_by_variable": fac, "Test_scattered": summary_s}
-    if not S.val_block.empty:
+    if "val_block" in S and not S.val_block.empty:
         sheets["Test_block"] = validate.score(S.val_block)
     c = st.columns(2)
     c[0].download_button("Download Excel workbook", export.to_excel(sheets, notes), "igneosuite_results.xlsx",
@@ -585,10 +718,13 @@ def render(user=None):
     """
     S["_user"] = user
     telemetry.session_id()
+    collect_jobs()
     with st.sidebar:
         st.markdown(f"### IgneoSuite\n<span style='color:#52514e'>{APP_META['tagline']}</span>", unsafe_allow_html=True)
         step = st.radio("Steps", STEPS, key="step", label_visibility="collapsed")
         if "X" in S:
             st.caption(f"{len(S.X):,} samples · {S.X.shape[1]} variables")
+        if running():
+            st.caption("⏳ A test is running (step 3).")
         st.caption(f"v{__version__} · Octa Insight")
     PAGES[step]()

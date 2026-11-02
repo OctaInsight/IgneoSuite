@@ -19,7 +19,10 @@ works best, and gives every estimated value its own error. It implements the wor
    numbers broken by hidden spaces are recovered and counted.
 2. **Missing values** – share missing per variable, the missingness pattern, co-missingness (φ) between
    variables, and whether element groups such as the REE are reported all-or-nothing.
-3. **Test methods** – hides measured values and re-estimates them with Mean, Median, KNN, MICE, missForest,
+3. **Test methods** – two tests with their own run buttons (test 1: scattered gaps; test 2: block gaps,
+   available once test 1 is done). Tests run in the background, so users can look at other steps; a panel
+   shows progress, elapsed and expected time, a reminder not to refresh the page, and rotating geology facts.
+    hides measured values and re-estimates them with Mean, Median, KNN, MICE, missForest,
    and (with PyTorch) a denoising autoencoder and GAIN. Two designs: scattered gaps and whole-block gaps
    (default block: REE). Reports median |log10(estimate/true)|, share within ×1.25 and ×2, runtime, and
    errors per variable, and recommends a method.
