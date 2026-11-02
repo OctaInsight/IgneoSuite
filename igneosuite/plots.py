@@ -173,3 +173,16 @@ def pca_scatter(P, ev, labels, title=""):
     ax.set_xlabel(f"PC1 ({100*ev[0]:.0f}%)"); ax.set_ylabel(f"PC2 ({100*ev[1]:.0f}%)")
     ax.legend(frameon=False, markerscale=2); ax.set_title(title, loc="left")
     return fig
+
+
+def clusters_3d(P, ev, labels, title="", azim=-60, elev=25):
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+    fig = plt.figure(figsize=(4.6, 4.2))
+    ax = fig.add_subplot(projection="3d")
+    for l in np.unique(labels):
+        s = labels == l
+        ax.scatter(P[s, 0], P[s, 1], P[s, 2], s=3, alpha=0.7, color=CAT[(int(l) - 1) % 8], label=f"C{l}", depthshade=False)
+    ax.set_xlabel(f"PC1 ({100*ev[0]:.0f}%)"); ax.set_ylabel(f"PC2 ({100*ev[1]:.0f}%)"); ax.set_zlabel(f"PC3 ({100*ev[2]:.0f}%)")
+    ax.view_init(elev=elev, azim=azim); ax.legend(frameon=False, markerscale=2, loc="upper left")
+    ax.set_title(title, loc="left")
+    return fig

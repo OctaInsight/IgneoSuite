@@ -44,6 +44,13 @@ works best, and gives every estimated value its own error. It implements the wor
 Model-based methods work on log10-transformed, standardised values (linear scale for any variable with
 zero or negative values).
 
+## Charts
+
+Every chart is interactive: hover to read values (sample number, cluster, coordinates, errors), zoom and
+pan. Under each chart, **Figure (PNG, 300 dpi)** downloads a publication-quality version and **Data (CSV)**
+the numbers behind it. Step 6 adds a rotatable 3-D view of the clusters on PC1–PC3, with a slider-based
+version for browsers without 3-D graphics.
+
 ## Run locally
 
 ```bash

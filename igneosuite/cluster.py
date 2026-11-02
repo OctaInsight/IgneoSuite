@@ -50,6 +50,6 @@ def match_labels(ref: np.ndarray, new: np.ndarray) -> np.ndarray:
     return np.array([m[x] for x in new])
 
 
-def pca(Z: np.ndarray, n=2):
-    p = PCA(n).fit(Z)
+def pca(Z: np.ndarray, n=3):
+    p = PCA(min(n, Z.shape[1])).fit(Z)
     return p.transform(Z), p.explained_variance_ratio_

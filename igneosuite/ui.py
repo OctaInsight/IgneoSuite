@@ -7,7 +7,7 @@ import streamlit as st
 from . import __version__
 from .io import read_table, clean_table, guess_columns, guess_meta, read_meta, REE, short_name
 from . import submit as submit_mod
-from . import diagnose, validate, errors, export, cluster, plots, telemetry, jobs, store, geometry
+from . import diagnose, validate, errors, export, cluster, plots, telemetry, jobs, store, geometry, iplots
 from .facts import FACTS
 import time
 from .imputers import METHODS, available_methods, impute, DEEP, HAS_TORCH
@@ -313,10 +313,13 @@ def page_diagnose():
     pv = diagnose.per_variable(X)
     t1, t2, t3, t4 = st.tabs(["By variable", "Pattern", "Co-missingness", "Blocks"])
     with t1:
-        _img(plots.missing_bar(pv))
+        iplots.show(iplots.missing_bar(pv), "Missing values by variable", "fig_missing_bar",
+                    data=pv.set_index("Variable"), png=("missing_bar", (pv,), {}))
         st.dataframe(_fmt(pv.set_index("Variable"), 2), width='stretch')
     with t2:
-        _img(plots.missing_matrix(X))
+        iplots.show(iplots.missing_matrix(X, S.ids), "Missingness pattern", "fig_missing_matrix",
+                    data=pd.concat([pd.Series(S.ids, name=S.id_col), X.notna().astype(int)], axis=1).set_index(S.id_col),
+                    png=("missing_matrix", (X,), {}), caption="Blue: measured; white: missing. Hover to see the sample.")
         cc = diagnose.completeness_curve(X)
         st.caption("Complete samples as variables are added from most to least complete")
         st.dataframe(_fmt(cc.set_index("n_variables"), 1), width='stretch', height=250)
@@ -325,7 +328,9 @@ def page_diagnose():
         if phi.empty:
             st.write("Too few variables with missing values.")
         else:
-            _img(plots.phi_heatmap(phi), "High φ: the two variables tend to be missing in the same samples.")
+            iplots.show(iplots.phi_heatmap(phi), "Co-missingness phi", "fig_phi", data=phi,
+                        png=("phi_heatmap", (phi,), {}),
+                        caption="High φ: the two variables tend to be missing in the same samples.")
     with t4:
         g = diagnose.groups(X)
         ree = g.get("REE", [])
@@ -540,10 +545,17 @@ def page_validate():
                        f"{', '.join(short_name(b) for b in bp.get('block', []))}.")
         tb = res["score"]
         st.dataframe(_fmt(tb, 3), width='stretch')
-        _img(plots.method_bars(tb))
-        _img(plots.per_variable_errors(res["pervar"], list(tb.index)))
+        tname = "Test 1 scattered" if key == "val_scat" else "Test 2 block"
+        iplots.show(iplots.method_bars(tb), f"{tname} method errors", f"fig_{key}_bars", data=tb,
+                    png=("method_bars", (tb,), {}))
+        iplots.show(iplots.per_variable_errors(res["pervar"], list(tb.index)), f"{tname} errors by variable",
+                    f"fig_{key}_pervar", data=res["pervar"], png=("per_variable_errors", (res["pervar"], list(tb.index)), {}))
         m = st.selectbox("Measured vs estimated for", list(tb.index), key=key + "_m")
-        _img(plots.true_vs_est(res["sample"], m), half=True)
+        half, _ = st.columns(2)
+        with half:
+            smp = res["sample"]
+            iplots.show(iplots.true_vs_est(smp, m), f"{tname} measured vs estimated {m}", f"fig_{key}_tve",
+                        data=smp[smp.method == m].reset_index(drop=True), png=("true_vs_est", (smp, m), {}))
     rec_s, why_s = validate.recommend(S.val_scat["score"])
     msg = f"**Recommended method: {rec_s}.** {why_s}"
     if S.get("val_block"):
@@ -635,7 +647,8 @@ def page_cluster():
             S.kscan = cluster.scan_k(Z)
         _changed("clusters")
     if "kscan" in S:
-        _img(plots.k_scan(S.kscan)); st.dataframe(_fmt(S.kscan, 3))
+        iplots.show(iplots.k_scan(S.kscan), "Cluster number scan", "fig_kscan", data=S.kscan,
+                    png=("k_scan", (S.kscan,), {}))
     if st.button("Run comparison", type="primary", disabled=len(base) < 2 or len(extra) < 2):
         bi = [cols.index(b) for b in base]; ei = [cols.index(e) for e in extra]
         rows = ~np.isnan(M[:, bi]).any(1)
@@ -659,12 +672,40 @@ def page_cluster():
         ct = pd.crosstab(pd.Series(c["lr"], name=f"Reference ({len(c['base'])} vars)"),
                          pd.Series(c["lf"], name=f"Gap-filled ({len(c['extra'])} vars)"))
         st.dataframe(ct)
-        P, ev = c["P"], c["ev"]
+        P, ev = np.asarray(c["P"]), np.asarray(c["ev"])
+        ids_c = np.asarray(S.ids)[c["rows"]]
+        lr, lf = np.asarray(c["lr"]), np.asarray(c["lf"])
+        coords = pd.DataFrame(P, columns=[f"PC{i + 1}" for i in range(P.shape[1])])
+        coords.insert(0, S.id_col, ids_c); coords["Reference cluster"] = lr; coords["Gap-filled cluster"] = lf
+        coords = coords.set_index(S.id_col)
+        st.markdown("#### 2-D view (PC1–PC2)")
         cc = st.columns(2)
         with cc[0]:
-            _img(plots.pca_scatter(P, ev, c["lr"], "Reference clusters"))
+            iplots.show(iplots.clusters_2d(P, ev, lr, ids_c, lf, "Gap-filled", "Reference clusters"),
+                        "Reference clusters PC1 PC2", "fig_clu_ref", data=coords,
+                        png=("pca_scatter", (P, ev, lr, "Reference clusters"), {}))
         with cc[1]:
-            _img(plots.pca_scatter(P, ev, c["lf"], "Gap-filled clusters"), "Both on the reference PCA axes")
+            iplots.show(iplots.clusters_2d(P, ev, lf, ids_c, lr, "Reference", "Gap-filled clusters"),
+                        "Gap-filled clusters PC1 PC2", "fig_clu_fill", data=coords,
+                        png=("pca_scatter", (P, ev, lf, "Gap-filled clusters"), {}))
+        st.caption("Both on the axes of the reference PCA. Hover over a sample to see its number and its cluster "
+                   "in both runs.")
+        if P.shape[1] >= 3:
+            st.markdown("#### 3-D view (PC1–PC2–PC3)")
+            which = st.radio("Colour by", ["Gap-filled clusters", "Reference clusters"], horizontal=True, key="clu3d_which")
+            lab, oth, oname = (lf, lr, "Reference") if which == "Gap-filled clusters" else (lr, lf, "Gap-filled")
+            iplots.show(iplots.clusters_3d(P, ev, lab, ids_c, oth, oname, which), f"{which} 3D", "fig_clu_3d",
+                        data=coords, png=("clusters_3d", (P, ev, lab, which), {}),
+                        caption="Drag to rotate, scroll to zoom, right-drag to move. Click a cluster in the legend to "
+                                "hide or show it; double-click to show only that cluster. Hover to see the sample.")
+            with st.expander("3-D view not showing? Use this version (rotate with the sliders)"):
+                s1, s2 = st.columns(2)
+                az = s1.slider("Turn (azimuth, °)", -180, 180, -60, 5, key="clu_az")
+                el = s2.slider("Tilt (elevation, °)", -90, 90, 25, 5, key="clu_el")
+                iplots.show(iplots.clusters_3d_projected(P, ev, lab, ids_c, az, el, which), f"{which} 3D projected",
+                            "fig_clu_3dp", png=("clusters_3d", (P, ev, lab, which), {"azim": az, "elev": el}))
+        else:
+            st.info("The 3-D view needs at least three reference variables and a fresh run of the comparison.")
         out = pd.DataFrame({S.id_col: np.asarray(S.ids)[c["rows"]], "Reference cluster": c["lr"], "Gap-filled cluster": c["lf"]})
         st.download_button("Download cluster labels (CSV)", out.to_csv(index=False).encode(), "igneosuite_clusters.csv", "text/csv")
     if "clu" in S or "kscan" in S:
@@ -720,7 +761,10 @@ def page_geometry():
     ev = np.asarray(g["explained"])
     c1, c2 = st.columns(2)
     with c1:
-        st.image(plots.to_png(plots.scree(ev)), width='stretch', caption="Variance explained by each component")
+        iplots.show(iplots.scree(ev), "Variance explained", "fig_scree",
+                    data=pd.DataFrame({"component": [f"PC{i + 1}" for i in range(len(ev))], "explained": ev,
+                                       "cumulative": np.cumsum(ev)}).set_index("component"),
+                    png=("scree", (ev,), {}), caption="Variance explained by each component")
     with c2:
         rows = np.asarray(g["rows"])
         colour_opts = ["None"] + (["Age (Ma)"] if S.meta.age_ma.iloc[rows].notna().any() else []) + \
@@ -732,10 +776,24 @@ def page_geometry():
         elif how == "Cluster (step 6)":
             lab = np.zeros(len(X), int); lab[np.where(S.clu["rows"])[0]] = S.clu["lf"]
             kw = dict(labels=lab[rows]) if (lab[rows] > 0).all() else {}
-        st.image(plots.to_png(plots.pc_scores(np.asarray(g["scores"]), ev, **kw)), width='stretch',
-                 caption="Samples on the first two principal components")
-    _img(plots.loadings(np.asarray(g["loadings"]), g["variables"], ev),
-         "Loadings: how strongly each element defines PC1 and PC2. Elements with long bars of the same sign rise and fall together.")
+        Psc = np.asarray(g["scores"])
+        ids_r = np.asarray(S.ids)[rows]
+        age_txt = [f"{a:.0f} Ma" if np.isfinite(a) else "—" for a in S.meta.age_ma.values[rows].astype(float)]
+        extra = {"Age": age_txt}
+        if "reference" in S.meta and S.meta.reference.notna().any():
+            extra["Reference"] = [r if isinstance(r, str) else "—" for r in S.meta.reference.values[rows]]
+        sc = pd.DataFrame(Psc, columns=[f"PC{i + 1}" for i in range(Psc.shape[1])])
+        sc.insert(0, S.id_col, ids_r)
+        iplots.show(iplots.pc_scores(Psc, ev, ids_r, extra=extra, **kw), "PC scores", "fig_pcscores",
+                    data=sc.set_index(S.id_col), png=("pc_scores", (Psc, ev), kw),
+                    caption="Samples on the first two principal components. Hover to see each sample.")
+    Lg = np.asarray(g["loadings"])
+    iplots.show(iplots.loadings(Lg, g["variables"], ev), "PC loadings", "fig_loadings",
+                data=pd.DataFrame(Lg, index=pd.Index(g["variables"], name="variable"),
+                                  columns=[f"PC{i + 1}" for i in range(Lg.shape[1])]),
+                png=("loadings", (Lg, list(g["variables"]), ev), {}),
+                caption="Loadings: how strongly each element defines PC1 and PC2. Elements with long bars of the "
+                        "same sign rise and fall together.")
     save_bar("geometry")
 
 
