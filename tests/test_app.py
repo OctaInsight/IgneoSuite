@@ -1,4 +1,4 @@
-import os, sys, numpy as np
+import os, sys, numpy as np, pandas as pd
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT); sys.path.insert(0, os.path.join(ROOT, "tests"))
 from make_demo import demo
@@ -13,23 +13,60 @@ def _data():
     return clean_table(raw, i, v), i, v
 
 
-def test_meta_and_submission_rows():
-    from igneosuite.io import guess_meta, read_meta
+def _meta(raw, ids):
+    from igneosuite.io import guess_meta
+    from igneosuite.location import check_locations, read_age
+    g = guess_meta(raw)
+    loc = check_locations(ids, raw[g["latitude"]], raw[g["longitude"]])
+    age, _ = read_age(raw[g["age_ma"]])
+    return g, loc, pd.DataFrame({"latitude": loc["latitude"], "longitude": loc["longitude"], "age_ma": age,
+                                 "latitude_original": raw[g["latitude"]].astype(str).values,
+                                 "longitude_original": raw[g["longitude"]].astype(str).values})
+
+
+def test_coordinates():
+    from igneosuite.location import parse_coordinate as p
+    assert p("25°27'24\"N", "latitude") == (25.456666666666667, "converted")
+    assert p("25 27 24 S", "latitude")[0] < 0 and p("33.12W", "longitude")[0] == -33.12
+    assert p("25,5", "latitude") == (25.5, "ok") and p(95, "latitude")[1] == "out_of_range"
+    assert p("25.4 E", "latitude")[1] == "wrong_hemisphere" and p("abc", "longitude")[1] == "unreadable"
+    assert p("25 70 00 N", "latitude")[1] == "unreadable" and p(None, "latitude")[1] == "missing"
+
+
+def test_location_check_and_submission_rows():
     from igneosuite.submit import sample_rows
     raw = demo()
-    g = guess_meta(raw)
-    assert g == {"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)"}
-    meta, bad = read_meta(raw, g)
-    assert bad["latitude"] == 1 and np.isnan(meta.latitude.iloc[2])
     i, v = guess_columns(raw)
     assert "Latitude" not in v and "Age (Ma)" not in v
+    g, loc, meta = _meta(raw, raw[i].astype(str).values)
+    assert g == {"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)"}
+    assert len(loc["problems"]) == 1 and loc["problems"].Row.iloc[0] == 4 and not loc["valid"][2]
+    assert not loc["swapped"]
+    from igneosuite.location import check_locations
+    sw = check_locations(["a", "b", "c"], pd.Series([120.5, 121.0, 119.8]), pd.Series([30.1, 31.2, 29.9]))
+    assert sw["swapped"]
     X, ids, _ = clean_table(raw, i, v)
     M = X.values; est = impute(M, "KNN"); E = np.where(np.isnan(M), 0.1 * est, np.nan)
     rows = sample_rows("d", ids, list(X.columns), M, meta, est, E)
     r = rows[0]
     assert r["row_number"] == 1 and r["sample_id"] == "S0000" and r["age_ma"] == meta.age_ma.iloc[0]
+    assert r["latitude_original"] == str(raw.Latitude.iloc[0])
     assert set(r["measured"]).isdisjoint(r["estimated"]) and set(r["estimated"]) == set(r["estimate_error"])
     assert len(r["measured"]) + len(r["estimated"]) == len(X.columns)
+
+
+def test_template_reads_back():
+    import io
+    from igneosuite.template import build
+    from igneosuite.io import guess_meta
+    raw = pd.read_excel(io.BytesIO(build()), sheet_name="Data", dtype=object)
+    i, v = guess_columns(raw)
+    g = guess_meta(raw)
+    assert i == "Sample ID" and g == {"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)"}
+    assert len(v) == 45
+    from igneosuite.location import check_locations
+    loc = check_locations(raw[i].values, raw.Latitude, raw.Longitude)
+    assert loc["valid"].all() and loc["n_converted"] == 1
 
 
 def test_reading():

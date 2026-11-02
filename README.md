@@ -10,8 +10,12 @@ works best, and gives every estimated value its own error. It implements the wor
 
 ## What it does
 
-1. **Load data** – CSV or Excel, one sample per row. Pick the sample-ID column, optional latitude,
-   longitude and age (Ma) columns (none of these are used in calculations), and the variables. Blank cells and placeholders (`n.d.`, `b.d.l.`, `-`, `<0.5`) become missing values;
+1. **Load data** – download the Excel template, or upload your own CSV or Excel file (one sample per row).
+   Sample ID, **latitude and longitude are required**; age (Ma) is optional but recommended. Coordinates may
+   be decimal degrees or degrees-minutes-seconds with N/S/E/W; they are checked and converted to decimal
+   degrees, and samples with missing or invalid locations are listed (fix them, or remove them to continue).
+   The samples are then shown on a map and the user is asked whether the locations are correct.
+   None of these columns are used in calculations. Blank cells and placeholders (`n.d.`, `b.d.l.`, `-`, `<0.5`) become missing values;
    numbers broken by hidden spaces are recovered and counted.
 2. **Missing values** – share missing per variable, the missingness pattern, co-missingness (φ) between
    variables, and whether element groups such as the REE are reported all-or-nothing.
@@ -43,9 +47,9 @@ Step 6 lets authors submit their dataset to the IgneoSuite database in the Octa 
 (`Octa_projects`), with their name, email, affiliation, title, reference, licence and consent.
 
 * `IgneoSuite_datasets` – one row per submission (metadata, licence, consent, review status
-  `submitted` / `approved` / `rejected`).
+  `submitted` / `approved` / `rejected`, and the author's answer to "are the locations correct?").
 * `IgneoSuite_samples` – one row per sample: author's sample ID, `latitude` and `longitude`
-  (decimal degrees, WGS84), `age_ma` (Ma), and `measured`, `estimated`, `estimate_error`
+  (decimal degrees, WGS84; required), the coordinates as the author wrote them, `age_ma` (Ma, optional), and `measured`, `estimated`, `estimate_error`
   (variable → value). Estimates are stored only if the author filled the gaps in step 4.
 * `IgneoSuite_values` – view of the samples in long format (one row per sample and variable).
 
@@ -93,6 +97,8 @@ igneosuite/cluster.py  optional K-means comparison
 igneosuite/plots.py    figures (paper colours, no text below 7 pt)
 igneosuite/telemetry.py anonymous usage records and feedback (Supabase)
 igneosuite/submit.py   author submissions (Supabase)
+igneosuite/location.py coordinate parsing and checks, map view
+igneosuite/template.py downloadable Excel template
 igneosuite/ui.py       interface; render(user=None) for the future portal
 supabase/migrations/   SQL for the IgneoSuite_ tables
 portal/README.md       plan for the Octa Insight portal (Supabase)

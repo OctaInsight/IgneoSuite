@@ -65,8 +65,10 @@ def clean_table(raw: pd.DataFrame, id_col: str, value_cols: list[str]):
 
 
 META_NAMES = {
-    "latitude": {"lat", "latitude", "lat (°)", "lat (deg)", "latitude (°)", "latitude (deg)", "y"},
-    "longitude": {"lon", "long", "lng", "longitude", "lon (°)", "long (°)", "longitude (°)", "longitude (deg)", "x"},
+    "latitude": {"lat", "latitude", "lat (°)", "lat (deg)", "latitude (°)", "latitude (deg)", "latitude (n)",
+                 "lat.", "y", "breddegrad"},
+    "longitude": {"lon", "long", "lng", "longitude", "lon (°)", "long (°)", "longitude (°)", "longitude (deg)",
+                  "longitude (e)", "long.", "x", "lengdegrad"},
     "age_ma": {"age", "age (ma)", "age ma", "age_ma", "age(ma)", "age [ma]", "ma"},
 }
 

@@ -37,79 +37,178 @@ def _fmt(df, digits=3):
 
 
 # ---------------------------------------------------------------- 1 load
+LOC_ANSWERS = {"confirmed": "Yes, the locations are correct",
+               "some_wrong": "No, some locations are wrong",
+               "not_sure": "I am not sure"}
+
+
+def _save_loc_answer(key):
+    S.location_check = S[key]
+    telemetry.event("locations", {"answer": S[key]}, _user())
+
+
+def location_map(key: str):
+    """Map of the samples with a question on whether the locations are correct."""
+    import pydeck as pdk
+    from .location import map_view
+    m = S.meta
+    d = pd.DataFrame({"sample": [str(x) for x in S.ids], "lat": m.latitude.values, "lon": m.longitude.values,
+                      "age": [("%.0f Ma" % a) if np.isfinite(a) else "no age" for a in m.age_ma.values]})
+    layer = pdk.Layer("ScatterplotLayer", d, get_position=["lon", "lat"], get_fill_color=[42, 120, 214, 190],
+                      get_line_color=[11, 11, 11, 200], line_width_min_pixels=0.5, stroked=True,
+                      get_radius=300, radius_min_pixels=3, radius_max_pixels=7, pickable=True)
+    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=pdk.ViewState(**map_view(d.lat.values, d.lon.values)),
+                             map_style="light", tooltip={"text": "{sample}\n{lat}, {lon}\n{age}"}),
+                    height=420)
+    st.caption(f"{len(d)} samples. Hover over a point to see the sample, its coordinates and its age.")
+    opts = list(LOC_ANSWERS)
+    cur = S.get("location_check")
+    st.radio("Are the sample locations correct?", opts, format_func=LOC_ANSWERS.get, key=key,
+             index=opts.index(cur) if cur in opts else None, horizontal=True,
+             on_change=_save_loc_answer, args=(key,))
+    if S.get("location_check") in ("some_wrong", "not_sure"):
+        S.location_comment = st.text_area("Which samples look wrong, and why? (optional)",
+                                          value=S.get("location_comment", ""), max_chars=2000, key=key + "_c")
+        if S.location_check == "some_wrong":
+            st.warning("Please correct the coordinates in your file and upload it again. Common causes: latitude and "
+                       "longitude swapped, a missing minus sign (S or W), or minutes entered as decimals.")
+
+
 def page_load():
+    from .location import check_locations, read_age
+    from .template import build as build_template
     st.header("Load data")
-    st.write("Upload a table with one sample per row. Choose the sample-ID column and the variables to use. "
-             "The ID column is kept for labelling and is never used in calculations.")
+    st.write("Upload a table with one sample per row. Every sample needs a sample ID, latitude and longitude; "
+             "age is optional but recommended. None of these are used in calculations.")
+    st.download_button("Download the Excel template", build_template(), "IgneoSuite_template.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       on_click=telemetry.event, args=("template", {}, _user()),
+                       help="Fill in the sheet 'Data' and upload it here. The sheet 'Instructions' explains the formats.")
     up = st.file_uploader("CSV or Excel file", type=["csv", "txt", "xlsx", "xlsm", "xls"])
     if up is None and "raw" not in S:
-        st.caption("Blank cells and placeholders such as n.d., b.d.l., '-' or '<0.5' are read as missing.")
+        st.caption("Blank cells and placeholders such as n.d., b.d.l., '-' or '<0.5' are read as missing. "
+                   "Coordinates may be decimal degrees (25.4567) or degrees-minutes-seconds (25°27'24\"N).")
         return
     if up is not None:
         sheet = 0
         if up.name.lower().endswith((".xlsx", ".xlsm", ".xls")):
             xl = pd.ExcelFile(up)
-            sheet = st.selectbox("Sheet", xl.sheet_names, index=0)
+            names = xl.sheet_names
+            sheet = st.selectbox("Sheet", names, index=names.index("Data") if "Data" in names else 0)
             up.seek(0)
         sig = (up.name, up.size, str(sheet))
         if S.get("sig") != sig:
             for k in list(S.keys()):
-                if k not in ("step",):
+                if k not in ("step", "_user", "_sid"):
                     del S[k]
             S.raw = read_table(up, sheet)
             S.sig = sig
     raw = S.raw
+    fk = str(abs(hash(S.get("sig"))) % 10**8)          # new widgets for every new file
     id_guess, val_guess = guess_columns(raw)
     cols = list(raw.columns)
-    id_col = st.selectbox("Sample-ID column", cols, index=cols.index(S.get("id_col", id_guess)))
-    st.markdown("**Location and age** (optional; kept with each sample, never used in calculations)")
+    id_col = st.selectbox("Sample-ID column", cols, index=cols.index(S.get("id_col", id_guess)), key="id_" + fk)
     mg = S.get("meta_cols", guess_meta(raw))
-    opts = ["(none)"] + [c for c in cols if c != id_col]
+    pick = "(choose a column)"
     mc = st.columns(3)
-    labels = {"latitude": "Latitude (decimal °, N positive)", "longitude": "Longitude (decimal °, E positive)",
-              "age_ma": "Age (Ma)"}
     meta_cols = {}
-    for box, key in zip(mc, labels):
-        cur = mg.get(key) if mg.get(key) in opts else "(none)"
-        v = box.selectbox(labels[key], opts, index=opts.index(cur), key="meta_" + key)
-        meta_cols[key] = None if v == "(none)" else v
+    for box, key, label, none in zip(mc, ["latitude", "longitude", "age_ma"],
+                                     ["Latitude *", "Longitude *", "Age (Ma), optional"], [pick, pick, "(none)"]):
+        opts = [none] + [c for c in cols if c != id_col]
+        cur = mg.get(key) if mg.get(key) in opts else none
+        v = box.selectbox(label, opts, index=opts.index(cur), key=f"meta_{key}_{fk}")
+        meta_cols[key] = None if v == none else v
     taken = {id_col, *[v for v in meta_cols.values() if v]}
     choices = [c for c in cols if c not in taken]
     default = [c for c in S.get("value_cols", val_guess) if c in choices]
-    value_cols = st.multiselect("Variables (concentrations)", choices, default=default)
+    value_cols = st.multiselect("Variables (concentrations)", choices, default=default, key="vars_" + fk)
+    drop_bad = False
+    if "loc_problems" in S and len(S.loc_problems):
+        drop_bad = st.checkbox(f"Remove the {len(S.loc_problems)} samples with location problems and continue",
+                               key="drop_" + fk)
     if st.button("Read values", type="primary", disabled=not value_cols):
-        X, ids, rep = clean_table(raw, id_col, value_cols)
-        meta, bad = read_meta(raw, meta_cols)
-        rep["meta_out_of_range"] = {k: v for k, v in bad.items() if v}
-        S.update(X=X, ids=ids, report=rep, id_col=id_col, value_cols=value_cols, meta=meta, meta_cols=meta_cols)
+        for k in ("X", "val_scat", "val_block", "est", "E", "clu", "location_check", "location_comment", "submitted_id"):
+            S.pop(k, None)
+        if not meta_cols["latitude"] or not meta_cols["longitude"]:
+            S.pop("loc_problems", None)
+            st.error("Latitude and longitude are required. Choose the columns that hold them. If your table has no "
+                     "coordinates, add them (the Excel template shows the format) and upload the file again.")
+            st.stop()
+        if meta_cols["latitude"] == meta_cols["longitude"]:
+            st.error("Latitude and longitude must be two different columns.")
+            st.stop()
+        ids_all = raw[id_col].astype(str).values
+        loc = check_locations(ids_all, raw[meta_cols["latitude"]], raw[meta_cols["longitude"]])
+        S.loc_problems = loc["problems"]
+        if loc["swapped"]:
+            st.error("Many latitudes are beyond ±90° while all longitudes are within ±90°. Latitude and longitude "
+                     "look swapped: choose the columns the other way round.")
+            st.stop()
+        if len(loc["problems"]) and not drop_bad:
+            st.rerun()
+        keep = loc["valid"]
+        if not keep.any():
+            st.error("No sample has a valid location.")
+            st.stop()
+        sub = raw.loc[keep].reset_index(drop=True)
+        X, ids, rep = clean_table(sub, id_col, value_cols)
+        if meta_cols["age_ma"]:
+            age, age_bad = read_age(sub[meta_cols["age_ma"]])
+        else:
+            age, age_bad = np.full(len(sub), np.nan), 0
+        S.meta = pd.DataFrame({"latitude": loc["latitude"][keep], "longitude": loc["longitude"][keep], "age_ma": age,
+                               "latitude_original": sub[meta_cols["latitude"]].astype(str).str.slice(0, 60).values,
+                               "longitude_original": sub[meta_cols["longitude"]].astype(str).str.slice(0, 60).values})
+        rep.update(n_removed=int((~keep).sum()), n_converted=loc["n_converted"], age_rejected=age_bad,
+                   precision_note=loc["precision_note"])
+        S.update(X=X, ids=ids, report=rep, id_col=id_col, value_cols=value_cols, meta_cols=meta_cols)
         sm = diagnose.summary(X)
         telemetry.event("load", dict(n_samples=sm["n_samples"], n_variables=sm["n_variables"],
                                      pct_missing=round(sm["pct_missing"], 2), n_complete=sm["n_complete"],
-                                     recovered=rep["counts"]["recovered"]), _user())
-        for k in ("val_scat", "val_block", "est", "E"):
-            S.pop(k, None)
+                                     recovered=rep["counts"]["recovered"], n_location_removed=rep["n_removed"],
+                                     n_with_age=int(np.isfinite(age).sum())), _user())
+    if "X" not in S and "loc_problems" in S and len(S.loc_problems):
+        P = S.loc_problems
+        st.error(f"{len(P)} samples have no valid location. Every sample needs a latitude and a longitude. "
+                 "Correct them in your file and upload it again, or tick the box above to remove these samples.")
+        st.dataframe(P, hide_index=True, width='stretch')
+        st.download_button("Download the list of problems (CSV)", P.to_csv(index=False).encode(),
+                           "IgneoSuite_location_problems.csv", "text/csv")
+        return
     if "X" in S:
         rep = S.report
         c = st.columns(4)
         c[0].metric("Samples", rep["n_rows"]); c[1].metric("Variables", rep["n_cols"])
         c[2].metric("Values read", rep["counts"]["number"] + rep["counts"]["recovered"])
         c[3].metric("Missing", rep["counts"]["missing"] + rep["counts"]["text"])
+        if rep.get("n_removed"):
+            st.warning(f"{rep['n_removed']} samples without a valid location were removed.")
+        if rep.get("n_converted"):
+            st.info(f"{rep['n_converted']} coordinates were converted to decimal degrees "
+                    "(from degrees-minutes-seconds or N/S/E/W notation).")
+        if rep.get("precision_note"):
+            st.warning(rep["precision_note"])
+        n_age = int(S.meta.age_ma.notna().sum())
+        if not S.meta_cols.get("age_ma"):
+            st.info("No age column chosen. Age is optional, but data with ages are much more useful.")
+        elif n_age < len(S.meta):
+            st.info(f"{n_age} of {len(S.meta)} samples have an age."
+                    + (f" {rep['age_rejected']} values could not be read or were outside 0–4,600 Ma." if rep.get("age_rejected") else ""))
         if rep["counts"]["recovered"]:
             st.success(f"{rep['counts']['recovered']} numbers contained hidden spaces or a decimal comma and were recovered.")
         if rep["text_examples"]:
             st.warning("Some cells could not be read as numbers and were set to missing: " +
                        "; ".join(f"{k}: {', '.join(v[:4])}" for k, v in rep["text_examples"].items()))
-        if rep.get("meta_out_of_range"):
-            st.warning("Location or age values outside the valid range were set to missing: " +
-                       ", ".join(f"{k} ({v})" for k, v in rep["meta_out_of_range"].items()))
-        if "meta" in S:
-            have = {k: int(S.meta[k].notna().sum()) for k in S.meta.columns}
-            st.caption(f"Samples with latitude: {have['latitude']}, longitude: {have['longitude']}, age: {have['age_ma']}")
         if rep["nonpositive"]:
             st.warning("Zero or negative values found in " + ", ".join(rep["nonpositive"]) +
                        ". These variables are treated on a linear scale instead of a log scale.")
-        st.dataframe(pd.concat([pd.Series(S.ids, name=S.id_col), S.get("meta", pd.DataFrame(index=S.X.index)), S.X],
-                               axis=1).head(200), width='stretch')
+        st.subheader("Sample locations")
+        location_map("loc_answer_load")
+        st.subheader("Data")
+        st.dataframe(pd.concat([pd.Series(S.ids, name=S.id_col),
+                                S.meta[["latitude", "longitude", "age_ma"]].rename(
+                                    columns={"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)"}),
+                                S.X], axis=1).head(200), width='stretch')
 
 
 # ---------------------------------------------------------------- 2 diagnose
@@ -340,14 +439,22 @@ def page_submit():
         st.info("The database connection is not set up for this installation.")
         return
     X = S.X; M = X.values.astype(float); cols = list(X.columns)
-    meta = S.get("meta", pd.DataFrame({"latitude": np.nan, "longitude": np.nan, "age_ma": np.nan}, index=X.index))
+    meta = S.meta
     c = st.columns(4)
     c[0].metric("Samples", len(X)); c[1].metric("Variables", len(cols))
     c[2].metric("With location", int((meta.latitude.notna() & meta.longitude.notna()).sum()))
     c[3].metric("With age", int(meta.age_ma.notna().sum()))
-    if meta.latitude.isna().all() or meta.age_ma.isna().all():
-        st.warning("Location or age is missing for every sample. You can still submit, but data with location "
-                   "and age are far more useful. Choose those columns in step 1 if your table has them.")
+    if meta.age_ma.isna().all():
+        st.info("No sample has an age. You can submit without ages, but dated samples are much more useful.")
+    if S.get("location_check") not in LOC_ANSWERS:
+        st.subheader("Check the locations")
+        location_map("loc_answer_submit")
+        if S.get("location_check") not in LOC_ANSWERS:
+            st.info("Answer the question under the map before submitting.")
+            return
+    if S.get("location_check") == "some_wrong":
+        st.warning("You said some sample locations are wrong. Please correct them in your file and upload it again "
+                   "(step 1) before submitting.")
     if "submitted_id" in S:
         st.success(f"Submitted. Reference number: {S.submitted_id}. Keep it if you need to contact us about this dataset.")
     with st.form("submit_form"):
@@ -368,13 +475,17 @@ def page_submit():
     if go:
         problems = [m for ok, m in [(len(name.strip()) >= 2, "author name"), ("@" in email, "a valid email"),
                                     (len(title.strip()) >= 3, "dataset title"), (consent, "your consent")] if not ok]
+        if S.get("location_check") == "some_wrong":
+            problems.append("corrected locations (you said some are wrong: fix them in your file and upload it again)")
         if problems:
             st.error("Please add " + ", ".join(problems) + ".")
             return
         bar = st.progress(0.0, "Sending dataset")
         try:
             did = submit_mod.submit(dict(author_name=name, author_email=email, affiliation=aff, title=title,
-                                         reference=ref, description=desc, licence=lic, consent=consent),
+                                         reference=ref, description=desc, licence=lic, consent=consent,
+                                         location_check=S.get("location_check", "not_checked"),
+                                         location_comment=S.get("location_comment") or None),
                                     S.ids, cols, M, meta,
                                     est=S.est if inc else None, E=S.E if inc else None,
                                     method=S.get("fill_method"), band=S.get("q"), user=_user(),
@@ -385,6 +496,7 @@ def page_submit():
             return
         bar.empty()
         S.submitted_id = did
+        telemetry.event("submit", {"n_samples": len(X)}, _user())
         st.rerun()
 
 

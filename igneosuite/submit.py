@@ -29,6 +29,8 @@ def sample_rows(dataset_id: str, ids, columns, M: np.ndarray, meta: pd.DataFrame
         r = dict(dataset_id=dataset_id, row_number=i + 1, sample_id=str(ids[i])[:200],
                  latitude=_num(meta["latitude"].iloc[i]), longitude=_num(meta["longitude"].iloc[i]),
                  age_ma=_num(meta["age_ma"].iloc[i]),
+                 latitude_original=(str(meta["latitude_original"].iloc[i])[:60] if "latitude_original" in meta else None),
+                 longitude_original=(str(meta["longitude_original"].iloc[i])[:60] if "longitude_original" in meta else None),
                  measured={c: float(M[i, j]) for j, c in enumerate(columns) if not miss[j]})
         if est is not None:
             r["estimated"] = {c: float(est[i, j]) for j, c in enumerate(columns) if miss[j] and np.isfinite(est[i, j])}
@@ -59,6 +61,8 @@ def _post(table, payload, user=None):
 def submit(info: dict, ids, columns, M, meta, est=None, E=None, method=None, band=None,
            user=None, progress=None) -> str:
     """Create the dataset row, then add samples in batches. Returns the dataset id."""
+    if meta["latitude"].isna().any() or meta["longitude"].isna().any():
+        raise RuntimeError("Every sample needs a latitude and a longitude.")
     did = str(uuid.uuid4())
     ds = dict(id=did, session_id=session_id(), app_version=__version__,
               author_name=info["author_name"].strip(), author_email=info["author_email"].strip(),
@@ -67,7 +71,10 @@ def submit(info: dict, ids, columns, M, meta, est=None, E=None, method=None, ban
               licence=info["licence"], consent=bool(info["consent"]),
               n_samples=int(M.shape[0]), n_variables=int(M.shape[1]), variables=list(map(str, columns)),
               estimation_method=method if est is not None else None,
-              error_band=band if est is not None else None)
+              error_band=band if est is not None else None,
+              location_check=info.get("location_check", "not_checked"),
+              location_comment=info.get("location_comment"),
+              n_with_age=int(meta["age_ma"].notna().sum()))
     if user is not None and getattr(user, "id", None):
         ds["user_id"] = user.id
     _post("IgneoSuite_datasets", ds, user)

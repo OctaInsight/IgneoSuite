@@ -10,8 +10,15 @@ from igneosuite.io import clean_table, guess_columns
 def test_pages():
     at = AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=300).run()
     assert not at.exception
+    import numpy as np, pandas as pd
     raw = demo(); i, v = guess_columns(raw); X, ids, rep = clean_table(raw, i, v)
     at.session_state["raw"] = raw
+    at.session_state["meta"] = pd.DataFrame({"latitude": raw.Latitude.astype(float).clip(-90, 90).values,
+                                             "longitude": raw.Longitude.astype(float).values,
+                                             "age_ma": raw["Age (Ma)"].astype(float).values,
+                                             "latitude_original": raw.Latitude.astype(str).values,
+                                             "longitude_original": raw.Longitude.astype(str).values})
+    at.session_state["meta_cols"] = {"latitude": "Latitude", "longitude": "Longitude", "age_ma": "Age (Ma)"}
     at.session_state["X"], at.session_state["ids"], at.session_state["report"] = X, ids, rep
     at.session_state["id_col"], at.session_state["value_cols"] = i, v
     for step in ["2 · Missing values", "3 · Test methods"]:
