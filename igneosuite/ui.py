@@ -1141,6 +1141,18 @@ PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, pag
                          page_about]))
 
 
+def _sidebar_footer():
+    from pathlib import Path
+    st.divider()
+    st.markdown(
+        f"<div style='font-size:0.82rem;line-height:1.5;color:#52514e'>"
+        f"<b style='color:#0b0b0b'>IgneoSuite {__version__}</b> · Octa Insight<br>"
+        f"© 2026 Octa Insight<br>Produced by Octa Systems</div>", unsafe_allow_html=True)
+    logo = Path(__file__).parent / "data" / "octa_logo.png"
+    if logo.exists():
+        st.image(str(logo), width=120)
+
+
 def render(user=None):
     """Draw the app. `user` is reserved for the Octa Insight portal (None = open use).
 
@@ -1171,7 +1183,7 @@ def render(user=None):
             st.caption(f"💾 Project: {S.get('project_meta', {}).get('title', '')}")
         if running():
             st.caption("⏳ A test is running (step 3).")
-        st.caption(f"v{__version__} · Octa Insight")
+        _sidebar_footer()
     if S.get("resumed"):
         st.success(f"Welcome back. The saved project **{S.pop('resumed')}** is open, with the results of every "
                    "saved step. You are at the last step you saved.")
