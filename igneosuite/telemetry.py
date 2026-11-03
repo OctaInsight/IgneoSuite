@@ -54,7 +54,9 @@ def _post(table: str, row: dict, user=None):
         return False
     url, key = cfg
     row = _clean({**row, "session_id": session_id(), "app_version": __version__})
-    if user is not None and getattr(user, "id", None):
+    if isinstance(user, dict) and user.get("id"):      # Octa account (octa_auth)
+        row["octa_user_id"] = user["id"]
+    elif user is not None and getattr(user, "id", None):
         row["user_id"] = user.id
     token = getattr(user, "access_token", None) or key
     req = urllib.request.Request(

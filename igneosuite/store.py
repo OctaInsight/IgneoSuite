@@ -113,6 +113,24 @@ def project_code(p: dict) -> str:
     return f"{p['id']}~{p['key']}"
 
 
+def by_account(p: dict) -> bool:
+    """True when the project was opened through the signed-in account (no private key in this session)."""
+    return str(p.get("key", "")).startswith("session:")
+
+
+def account_key(session_token: str) -> str:
+    return f"session:{session_token}"
+
+
+def claim(p, session_token: str) -> bool:
+    """Attach a saved project to the signed-in Octa account (the first owner stays)."""
+    return bool(_rpc("igneosuite_claim", {"p_id": p["id"], "p_key": p["key"], "p_session": session_token}))
+
+
+def my_projects(session_token: str) -> list[dict]:
+    return _rpc("igneosuite_my_projects", {"p_session": session_token}) or []
+
+
 def parse_code(code: str) -> dict | None:
     code = (code or "").strip()
     if "~" not in code:

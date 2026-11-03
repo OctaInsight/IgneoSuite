@@ -23,6 +23,17 @@ def _user():
     return S.get("_user")
 
 
+def _session_token():
+    """Token of the signed-in Octa account, or None (local copies run without accounts)."""
+    if not S.get("_user"):
+        return None
+    try:
+        from octa_auth import token
+        return token()
+    except Exception:
+        return None
+
+
 def _img(fig, caption=None, half=False):
     if half:
         col, _ = st.columns(2)
@@ -155,7 +166,7 @@ def page_load():
         sig = (up.name, up.size, str(sheet))
         if S.get("sig") != sig:
             for k in list(S.keys()):
-                if k not in ("step", "_user", "_sid"):
+                if k not in ("step", "_user", "_sid", "_octa_auth"):
                     del S[k]
             st.query_params.clear()
             S.raw = read_table(up, sheet)
@@ -944,7 +955,19 @@ def do_save(steps, meta_changed=False):
             box.update(label="Saving failed.", state="error", expanded=True)
             st.error(str(e))
             return False
-    st.query_params.update({"project": p["id"], "key": p["key"]})
+    tok = _session_token()
+    if tok and not store.by_account(p) and S.get("_claimed") != p["id"]:
+        try:
+            store.claim(p, tok)
+            S._claimed = p["id"]
+        except Exception:
+            pass
+    if store.by_account(p):
+        st.query_params["project"] = p["id"]
+        if "key" in st.query_params:
+            del st.query_params["key"]
+    else:
+        st.query_params.update({"project": p["id"], "key": p["key"]})
     telemetry.event("save", {"steps": todo, "new": new}, user)
     st.toast("Saved ✅")
     return True
@@ -955,7 +978,15 @@ def project_info():
         return
     p = S.project
     st.success(f"Saved project: **{S.get('project_meta', {}).get('title', '')}**")
-    st.markdown("To continue later, keep this page's address (it now contains your project), or note your "
+    if _session_token():
+        st.markdown("The project is kept in **your account**: open it again from *📂 Open a saved project* in "
+                    "step 1 whenever you are logged in.")
+    if store.by_account(p):
+        return
+    st.markdown("You can also keep this page's address (it contains your project), or note your "
+                "**project code**. Anyone with the code can open the project, so keep it private."
+                if _session_token() else
+                "To continue later, keep this page's address (it now contains your project), or note your "
                 "**project code**. Anyone with the code can open the project, so keep it private.")
     st.code(store.project_code(p), language=None)
 
@@ -1002,7 +1033,27 @@ def save_bar(step):
 def open_project_box():
     if not store.enabled():
         return
-    with st.expander("📂 Open a saved project"):
+    tok = _session_token()
+    with st.expander("📂 Open a saved project", expanded=bool(tok) and "X" not in S):
+        if tok:
+            try:
+                mine = store.my_projects(tok)
+            except Exception as e:
+                mine = []
+                st.caption(f"Your saved projects could not be listed. {e}")
+            if mine:
+                st.markdown("**My saved projects**")
+                for d in mine[:30]:
+                    c1, c2 = st.columns([5, 1], vertical_alignment="center")
+                    when = str(d.get("updated_at") or "")[:16].replace("T", " ")
+                    last = STEP_LABEL.get(d.get("last_step") or "", d.get("last_step") or "")
+                    c1.markdown(f"**{d.get('title') or 'Untitled'}** · {d.get('n_samples') or 0:,} samples"
+                                f"{' · last saved: ' + last if last else ''} · {when}")
+                    if c2.button("Open", key=f"mine_{d['id']}"):
+                        open_project({"id": d["id"], "key": store.account_key(tok)})
+                st.markdown("**Or open with a project code**")
+            else:
+                st.caption("Projects you save while logged in will be listed here.")
         code = st.text_input("Project code", placeholder="paste the code you got when you saved", key="open_code")
         if st.button("Open", key="open_btn"):
             p = store.parse_code(code)
@@ -1029,7 +1080,7 @@ def restore(p, out):
     """Rebuild the session from a saved project."""
     d, steps, rows = out["dataset"], out["steps"], out["samples"]
     for k in list(S.keys()):
-        if k not in ("_user", "_sid"):
+        if k not in ("_user", "_sid", "_octa_auth"):
             del S[k]
     cols = list(d.get("variables") or (steps.get("load", {}).get("params", {}).get("variables") or []))
     meas = pd.DataFrame([r.get("measured") or {} for r in rows]).reindex(columns=cols).astype(float)
@@ -1210,7 +1261,7 @@ def _sidebar_footer():
                     f"style='width:150px;height:auto;margin-top:6px;image-rendering:auto'>", unsafe_allow_html=True)
 
 
-def render(user=None):
+def render(user=None, app=None):
     """Draw the app. `user` is reserved for the Octa Insight portal (None = open use).
 
     A portal passes an object with `.id` (Supabase auth user id) and `.access_token`; usage rows are then
@@ -1222,8 +1273,10 @@ def render(user=None):
         p, out = S.pop("_pending_open")
         restore(p, out)
     qp = st.query_params
-    if store.enabled() and "project" in qp and "key" in qp and S.get("project", {}).get("id") != qp["project"]             and not S.get("_resume_failed"):
-        p = {"id": qp["project"], "key": qp["key"]}
+    tok = _session_token()
+    if store.enabled() and "project" in qp and ("key" in qp or tok) and \
+            S.get("project", {}).get("id") != qp["project"] and not S.get("_resume_failed"):
+        p = {"id": qp["project"], "key": qp.get("key") or store.account_key(tok)}
         try:
             with st.spinner("Opening your saved project…"):
                 restore(p, store.load(p, user))
@@ -1240,6 +1293,10 @@ def render(user=None):
             st.caption(f"💾 Project: {S.get('project_meta', {}).get('title', '')}")
         if running():
             st.caption("⏳ A test is running (step 3).")
+        if app is not None:
+            st.divider()
+            from octa_auth import sidebar as account_box
+            account_box(app)
         _sidebar_footer()
     if S.get("resumed"):
         st.success(f"Welcome back. The saved project **{S.pop('resumed')}** is open, with the results of every "

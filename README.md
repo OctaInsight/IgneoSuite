@@ -71,6 +71,21 @@ streamlit run app.py
 * Access: all reads and writes go through the `igneosuite_*` database functions, which require the
   project's private key (only its SHA-256 hash is stored) or, once sign-in exists, the owner's account.
 
+## Octa accounts (optional)
+
+IgneoSuite can use the shared Octa Insight login (one account for all Octa apps; see
+[OctaInsight/launch](https://github.com/OctaInsight/launch)). It is switched on by an `[octa_users]` section in the
+Streamlit secrets (see `.streamlit/secrets.toml.example`). Without that section the app runs openly, as before.
+
+With accounts switched on:
+
+- IgneoSuite shows its own login and registration page (scientific profile: affiliation, ORCID, research field).
+- The sidebar has **Log in / Log out / Octa suite** buttons.
+- Projects saved while logged in are listed under *📂 Open a saved project* and open without the project code.
+- Forgotten usernames or passwords are handled by email.
+
+The `octa_auth` folder is a copy of the module in the launch repository.
+
 ## Author submissions (earlier version)
 
 Step 6 lets authors submit their dataset to the IgneoSuite database in the Octa Insight Supabase project
