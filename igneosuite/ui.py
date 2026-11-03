@@ -1174,14 +1174,149 @@ def save_bar(step):
         st.rerun()
 
 
-def _project_row(d, key, label_extra=""):
-    c1, c2 = st.columns([5, 1], vertical_alignment="center")
+def _project_row(d, key, label_extra="", delete_col=False, d_id=None, pending=False):
+    if delete_col:
+        c1, c2, c3 = st.columns([5, 1, 1.3], vertical_alignment="center")
+        tok = _session_token()
+        if pending:
+            if c3.button("Cancel deletion", key=f"undel_{d_id}"):
+                store.cancel_delete(tok, d_id)
+                st.rerun()
+        elif c3.button("🗑 Delete", key=f"del_{d_id}"):
+            S._del_target = None if S.get("_del_target") == d_id else d_id
+            st.rerun()
+    else:
+        c1, c2 = st.columns([5, 1], vertical_alignment="center")
     when = str(d.get("updated_at") or "")[:16].replace("T", " ")
     last = STEP_LABEL.get(d.get("last_step") or "", d.get("last_step") or "")
     title = (d.get("title") or "Untitled").replace("*", "").replace("_", " ")
     c1.markdown(f"**{title}**{label_extra} · {d.get('n_samples') or 0:,} samples"
                 f"{' · last saved: ' + last if last else ''} · {when}")
     return c2.button("Open", key=key)
+
+
+def _delete_form(tok, d):
+    """Owner asks for a project to be deleted; an Octa administrator must approve it."""
+    with st.container(border=True):
+        n = d.get("n_shares") or 0
+        st.markdown(f"**Delete “{d.get('title') or 'Untitled'}”?**")
+        st.write("Deleting removes the data, the filled values and the saved results of every step"
+                 + (f", and the project disappears for the {n} {'person' if n == 1 else 'people'} you shared it with"
+                    if n else "") + ". To protect you from mistakes, nothing is deleted until an Octa Insight "
+                 "administrator approves the request. You can cancel it until then.")
+        reason = st.text_area("Why should it be deleted? (comment for the administrator)", key=f"del_reason_{d['id']}",
+                              max_chars=2000, height=80)
+        sure = st.checkbox("I understand that the project and everything saved with it will be deleted for good once "
+                           "approved.", key=f"del_sure_{d['id']}")
+        c1, c2 = st.columns(2)
+        if c1.button("Send deletion request", type="primary", disabled=not sure, key=f"del_go_{d['id']}"):
+            try:
+                out = store.request_delete(tok, d["id"], reason)
+            except Exception as e:
+                out = {"ok": False, "error": str(e)}
+            if not out.get("ok"):
+                st.error(out.get("error", "The request could not be sent."))
+                return
+            _notify_admin_delete(out, reason)
+            S._del_target = None
+            S._del_msg = ("Your deletion request was sent. An administrator will review it; the project stays "
+                          "available until then.")
+            st.rerun()
+        if c2.button("Keep the project", key=f"del_no_{d['id']}"):
+            S._del_target = None
+            st.rerun()
+
+
+def _notify_admin_delete(out, reason):
+    try:
+        from octa_auth import mail
+        if not mail.enabled():
+            return
+        admin = st.secrets["email"]["user"]
+        mail.send(admin, f"IgneoSuite: deletion request for “{out.get('title')}”",
+                  [f"{html.escape(out.get('by') or 'A user')} asked to delete the IgneoSuite project "
+                   f"<b>{html.escape(out.get('title') or '')}</b>.",
+                   f"Comment: {html.escape(reason or '(none)')}",
+                   "Log in to IgneoSuite as administrator and open the <i>Admin</i> page to approve or reject it."],
+                  button=("Open IgneoSuite", WEB_APP))
+    except Exception:
+        pass
+
+
+def _notify_owner_decision(out, comment):
+    try:
+        from octa_auth import mail
+        if not mail.enabled() or not out.get("owner_email"):
+            return
+        ok = out.get("status") == "approved"
+        mail.send(out["owner_email"],
+                  f"IgneoSuite: your project “{out.get('title')}” was {'deleted' if ok else 'not deleted'}",
+                  [f"Dear {html.escape(out.get('owner_name') or 'IgneoSuite user')},",
+                   (f"your request was approved: the project <b>{html.escape(out.get('title') or '')}</b> and "
+                    "everything saved with it have been deleted." if ok else
+                    f"your request to delete <b>{html.escape(out.get('title') or '')}</b> was not approved; "
+                    "the project is still in your account.")]
+                  + ([f"Comment from the administrator: {html.escape(comment)}"] if comment else []),
+                  button=("Open IgneoSuite", WEB_APP))
+    except Exception:
+        pass
+
+
+def page_admin():
+    st.header("Admin · deletion requests")
+    tok = _session_token()
+    try:
+        out = store.admin_delete_requests(tok)
+    except Exception as e:
+        st.error(str(e))
+        return
+    if not out.get("ok"):
+        st.error(out.get("error", "Admins only."))
+        return
+    if S.get("_admin_msg"):
+        st.success(S.pop("_admin_msg"))
+    reqs = out.get("requests", [])
+    pending = [r for r in reqs if r["status"] == "pending"]
+    st.caption("Project owners ask here for a project to be deleted. Approving deletes the project, its samples, "
+               "filled values, saved steps and all shares, for good. Rejecting keeps everything.")
+    if not pending:
+        st.info("No deletion requests are waiting.")
+    for r in pending:
+        with st.container(border=True):
+            when = str(r.get("created_at") or "")[:16].replace("T", " ")
+            st.markdown(f"**{html.escape(r.get('title') or 'Untitled')}** · {r.get('n_samples') or 0:,} samples · "
+                        f"shared with {r.get('n_shares') or 0}")
+            st.markdown(f"Owner: {html.escape(r.get('owner') or '')} ({html.escape(r.get('owner_email') or '')}) · "
+                        f"asked {when}")
+            st.markdown(f"Owner's comment: *{html.escape(r.get('reason') or '(none)')}*")
+            if not r.get("exists"):
+                st.caption("The project no longer exists.")
+            comment = st.text_input("Your comment (sent to the owner)", key=f"adm_c_{r['id']}")
+            sure = st.checkbox("Yes, delete this project and everything linked to it", key=f"adm_s_{r['id']}")
+            c1, c2, _ = st.columns([1.3, 1, 3])
+            for col, label, approve, kw in ((c1, "Approve and delete", True, dict(type="primary", disabled=not sure)),
+                                            (c2, "Reject", False, {})):
+                if col.button(label, key=f"adm_{'y' if approve else 'n'}_{r['id']}", **kw):
+                    try:
+                        res = store.admin_decide_delete(tok, r["id"], approve, comment)
+                    except Exception as e:
+                        res = {"ok": False, "error": str(e)}
+                    if not res.get("ok"):
+                        st.error(res.get("error"))
+                    else:
+                        _notify_owner_decision(res, comment)
+                        S._admin_msg = (f"“{r.get('title')}” was deleted." if approve else
+                                        f"The request for “{r.get('title')}” was rejected.")
+                        st.rerun()
+    done = [r for r in reqs if r["status"] != "pending"]
+    if done:
+        st.subheader("Earlier requests")
+        st.dataframe(pd.DataFrame([dict(Project=r.get("title"), Owner=r.get("owner_email"), Status=r["status"],
+                                        Asked=str(r.get("created_at") or "")[:16].replace("T", " "),
+                                        Decided=str(r.get("decided_at") or "")[:16].replace("T", " "),
+                                        By=r.get("decided_by"), Reason=r.get("reason"),
+                                        Comment=r.get("admin_comment")) for r in done]),
+                     hide_index=True, use_container_width=True)
 
 
 def open_project_box():
@@ -1207,12 +1342,18 @@ def open_project_box():
         except Exception as e:
             st.caption(f"Your projects could not be listed. {e}")
             return
+        if S.get("_del_msg"):
+            st.success(S.pop("_del_msg"))
         st.markdown("**My projects**")
         if not mine:
             st.caption("Projects you save while logged in will be listed here.")
         for d in mine[:50]:
-            if _project_row(d, f"mine_{d['id']}"):
+            extra = " · 🗑 *deletion requested, waiting for approval*" if d.get("delete_requested") else ""
+            if _project_row(d, f"mine_{d['id']}", extra, delete_col=True, d_id=d["id"],
+                            pending=bool(d.get("delete_requested"))):
                 open_project({"id": d["id"], "key": store.account_key(tok), "role": "owner"})
+            if S.get("_del_target") == d["id"]:
+                _delete_form(tok, d)
         st.markdown("**Shared with me**")
         if not shared:
             st.caption("Projects other IgneoSuite users share with you will be listed here.")
@@ -1357,6 +1498,7 @@ statistics (table size, share missing, methods tested and their error scores), n
                 st.success("Thank you, your feedback was sent.") if ok else st.error("Sending failed. Please try again later.")
 
 
+ADMIN_STEP = "🛡 Admin"
 PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, page_geometry, page_cluster, page_save,
                          page_about]))
 
@@ -1453,7 +1595,11 @@ def render(user=None, app=None):
     collect_jobs()
     with st.sidebar:
         st.markdown(f"### IgneoSuite\n<span style='color:#52514e'>{APP_META['tagline']}</span>", unsafe_allow_html=True)
-        step = st.radio("Steps", STEPS, key="step", label_visibility="collapsed")
+        is_admin = bool(user) and isinstance(user, dict) and user.get("role") == "admin"
+        options = STEPS + ([ADMIN_STEP] if is_admin else [])
+        if S.get("step") not in options:
+            S.step = STEPS[0]
+        step = st.radio("Steps", options, key="step", label_visibility="collapsed")
         if "X" in S:
             st.caption(f"{len(S.X):,} samples · {S.X.shape[1]} variables")
         if "project" in S:
@@ -1468,4 +1614,4 @@ def render(user=None, app=None):
     if S.get("resumed"):
         st.success(f"Welcome back. The saved project **{S.pop('resumed')}** is open, with the results of every "
                    "saved step. You are at the last step you saved.")
-    PAGES[step]()
+    (page_admin if step == ADMIN_STEP else PAGES[step])()

@@ -85,6 +85,9 @@ With accounts switched on:
 - In step 7 the owner can **share** a project with Octa users (search by name, username or email) or **invite**
   people by email, as *can view* or *can edit*. Invited people see the project once they register with that email.
   Viewers cannot save changes; the database enforces this.
+- The owner can ask for a project to be **deleted** (step 1, *My projects* → 🗑 Delete, with a comment). Nothing is
+  deleted until an Octa administrator approves it on the **🛡 Admin** page; approval deletes the project, its samples,
+  filled values, saved steps and all shares. Only the owner can ask, not the people it is shared with.
 - Forgotten usernames or passwords are handled by email.
 
 The `octa_auth` folder is a copy of the module in the launch repository.

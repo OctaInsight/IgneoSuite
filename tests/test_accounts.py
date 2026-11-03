@@ -163,3 +163,50 @@ def test_viewer_cannot_save(db, monkeypatch):
     assert not at.exception, at.exception
     assert any("shared with you" in i.value for i in at.info)
     assert not any(b.label == "Save everything" for b in at.button)
+
+
+def test_owner_requests_delete_and_admin_approves(db, monkeypatch):
+    from igneosuite import store
+    calls = {}
+    monkeypatch.setattr(store, "enabled", lambda: True)
+    mine = [dict(id="a1", title="Wrong upload", n_samples=10, n_shares=2, updated_at="2026-11-04T00:00")]
+    monkeypatch.setattr(store, "my_projects", lambda tok: mine)
+    monkeypatch.setattr(store, "shared_with_me", lambda tok: [])
+    def req(tok, pid, reason):
+        calls["request"] = (pid, reason)
+        return {"ok": True, "title": "Wrong upload", "by": "Ann (ann@x.org)"}
+    monkeypatch.setattr(store, "request_delete", req)
+    uid = db.add_user("ann@x.org", "ann", "Secret-123", first_name="Ann")
+    at = _at({"session": db._new_session(uid)})
+    assert "🛡 Admin" not in at.sidebar.radio[0].options          # not an admin
+    at.button(key="del_a1").click().run()
+    assert any("nothing is deleted until" in m.value for m in at.markdown)
+    assert at.button(key="del_go_a1").disabled                    # must tick the box first
+    at.text_area(key="del_reason_a1").input("Uploaded the wrong file")
+    at.checkbox(key="del_sure_a1").check().run()
+    at.button(key="del_go_a1").click().run()
+    assert not at.exception, at.exception
+    assert calls["request"] == ("a1", "Uploaded the wrong file")
+    assert any("deletion request was sent" in s.value for s in at.success)
+    assert any("deletion request" in m["subject"] for m in db.mails)   # administrator emailed
+
+    # administrator
+    pending = [dict(id=7, title="Wrong upload", n_samples=10, n_shares=2, owner="Ann", owner_email="ann@x.org",
+                    reason="Uploaded the wrong file", status="pending", exists=True, created_at="2026-11-04T00:01")]
+    monkeypatch.setattr(store, "admin_delete_requests", lambda tok: {"ok": True, "requests": pending})
+    def decide(tok, rid, approve, comment):
+        calls["decide"] = (rid, approve, comment)
+        return {"ok": True, "status": "approved", "title": "Wrong upload", "owner_email": "ann@x.org", "owner_name": "Ann"}
+    monkeypatch.setattr(store, "admin_decide_delete", decide)
+    adm = db.add_user("tamer@x.org", "tamer", "Secret-123", first_name="Tamer", role="admin")
+    at = _at({"session": db._new_session(adm)})
+    at.sidebar.radio[0].set_value("🛡 Admin").run()
+    assert not at.exception, at.exception
+    assert any("Uploaded the wrong file" in m.value for m in at.markdown)
+    assert at.button(key="adm_y_7").disabled
+    at.text_input(key="adm_c_7").input("Done")
+    at.checkbox(key="adm_s_7").check().run()
+    at.button(key="adm_y_7").click().run()
+    assert calls["decide"] == (7, True, "Done")
+    assert any("was deleted" in s.value for s in at.success)
+    assert any("was deleted" in m["subject"] for m in db.mails)        # owner emailed

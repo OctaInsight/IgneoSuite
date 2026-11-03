@@ -154,6 +154,24 @@ def shares(session_token: str, project_id: str) -> list[dict]:
     return _rpc("igneosuite_shares", {"p_session": session_token, "p_id": project_id}) or []
 
 
+# ---- deleting a project: the owner asks, an administrator approves
+def request_delete(session_token: str, project_id: str, reason: str) -> dict:
+    return _rpc("igneosuite_request_delete", {"p_session": session_token, "p_id": project_id, "p_reason": reason}) or {}
+
+
+def cancel_delete(session_token: str, project_id: str) -> bool:
+    return bool(_rpc("igneosuite_cancel_delete", {"p_session": session_token, "p_id": project_id}))
+
+
+def admin_delete_requests(session_token: str) -> dict:
+    return _rpc("igneosuite_admin_delete_requests", {"p_session": session_token}) or {}
+
+
+def admin_decide_delete(session_token: str, request_id: int, approve: bool, comment: str) -> dict:
+    return _rpc("igneosuite_admin_decide_delete", {"p_session": session_token, "p_request": int(request_id),
+                                                    "p_approve": bool(approve), "p_comment": comment}) or {}
+
+
 def unshare(session_token: str, project_id: str, email: str) -> bool:
     return bool(_rpc("igneosuite_unshare", {"p_session": session_token, "p_id": project_id, "p_email": email}))
 
