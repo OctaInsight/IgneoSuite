@@ -11,8 +11,6 @@ Settings come from Streamlit secrets, section [octa_users] (falls back to [supab
 """
 from __future__ import annotations
 import json
-import urllib.error
-import urllib.request
 
 import streamlit as st
 
@@ -39,22 +37,32 @@ def enabled() -> bool:
     return bool(setting("url") and setting("key"))
 
 
+_HTTP = None
+
+
+def _http():
+    """One shared HTTPS connection pool: reusing connections saves a TLS handshake (an ocean crossing) per call."""
+    global _HTTP
+    if _HTTP is None:
+        import requests
+        _HTTP = requests.Session()
+        _HTTP.mount("https://", requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=16))
+    return _HTTP
+
+
 def rpc(fn: str, timeout: int = 20, **args):
     url, key = setting("url"), setting("key")
     if not (url and key):
         raise OctaError("The Octa user database is not set up for this installation.")
-    req = urllib.request.Request(f"{url.rstrip('/')}/rest/v1/rpc/{fn}", data=json.dumps(args).encode(), method="POST",
-                                 headers={"apikey": key, "Authorization": f"Bearer {key}",
-                                          "Content-Type": "application/json"})
+    import requests
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read()
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")[:300]
-        raise OctaError(f"The user database answered with an error ({e.code}). {detail}") from None
-    except (urllib.error.URLError, TimeoutError) as e:
-        raise OctaError(f"The user database could not be reached ({getattr(e, 'reason', e)}). Please try again.") from None
-    return json.loads(body) if body else None
+        r = _http().post(f"{url.rstrip('/')}/rest/v1/rpc/{fn}", data=json.dumps(args), timeout=timeout,
+                         headers={"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    except requests.RequestException as e:
+        raise OctaError(f"The user database could not be reached ({type(e).__name__}). Please try again.") from None
+    if r.status_code >= 400:
+        raise OctaError(f"The user database answered with an error ({r.status_code}). {r.text[:300]}")
+    return r.json() if r.content else None
 
 
 # thin wrappers -------------------------------------------------------------------------------------------
