@@ -97,7 +97,11 @@ document.getElementById('save').onclick=()=>{
     o2.beginPath();o2.arc(W-120,yy-4,5,0,6.2832);o2.fill();o2.fillStyle='#0b0b0b';o2.fillText(D.names[g],W-110,yy);yy+=18;});
   const a=document.createElement('a'); a.download='__FILE__.png'; a.href=out.toDataURL('image/png'); a.click();};
 window.addEventListener('resize',()=>{size();draw();});
-size(); legend(); draw();
+// The frame may get its final size only after this script runs (browser, slow server): redraw whenever
+// the canvas changes size, and keep trying until it has a width.
+if (window.ResizeObserver) new ResizeObserver(()=>{size();draw();}).observe(cv);
+legend();
+(function first(n){ size(); draw(); if (W < 10 && n < 100) setTimeout(()=>first(n+1), 100); })(0);
 </script>
 """
 
