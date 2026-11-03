@@ -6,10 +6,15 @@ from sklearn.impute import KNNImputer, IterativeImputer
 from sklearn.linear_model import BayesianRidge
 from sklearn.ensemble import RandomForestRegressor
 from .transform import LogStandardiser
+import os
+
+# Streamlit Community Cloud gives an app about 2 CPU cores; using more only gets the app throttled.
+N_THREADS = max(1, min(2, os.cpu_count() or 1))
 
 try:
     import torch
     import torch.nn as nn
+    torch.set_num_threads(N_THREADS)
     HAS_TORCH = True
 except Exception:  # pragma: no cover
     HAS_TORCH = False
@@ -42,7 +47,7 @@ def mice_impute(M, seed=0, max_iter=20):
 
 def missforest_impute(M, seed=0, n_trees=50, max_iter=5):
     t = LogStandardiser().fit(M)
-    est = RandomForestRegressor(n_estimators=n_trees, min_samples_leaf=2, max_features=0.33, n_jobs=-1, random_state=seed)
+    est = RandomForestRegressor(n_estimators=n_trees, min_samples_leaf=2, max_features=0.33, n_jobs=N_THREADS, random_state=seed)
     Z = IterativeImputer(estimator=est, max_iter=max_iter, tol=1e-3, initial_strategy="median",
                          random_state=seed, keep_empty_features=True).fit_transform(t.transform(M))
     return np.where(np.isnan(M), t.inverse(Z), M)

@@ -439,8 +439,12 @@ def progress_panel(kind):
 
 def _start(kind, M, cols, methods, scenario, frac, bidx, reps, seed, info, eta):
     S.pop(f"{kind}_error", None)
-    job = jobs.start(_job_key(kind), validate.run, M.copy(), cols, list(methods), scenario, frac,
-                     block_cols=bidx, reps=int(reps), seed0=int(seed))
+    try:
+        job = jobs.start(_job_key(kind), validate.run, M.copy(), cols, list(methods), scenario, frac,
+                         block_cols=bidx, reps=int(reps), seed0=int(seed))
+    except jobs.Busy as e:
+        S[f"{kind}_error"] = str(e)
+        return
     job["info"] = info
     job["eta"] = eta
     job["fact0"] = int(np.random.default_rng().integers(len(FACTS)))
