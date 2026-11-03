@@ -81,7 +81,10 @@ With accounts switched on:
 
 - IgneoSuite shows its own login and registration page (scientific profile: affiliation, ORCID, research field).
 - The sidebar has **Log in / Log out / Octa suite** buttons.
-- Projects saved while logged in are listed under *📂 Open a saved project* and open without the project code.
+- *📂 Open a saved project* (step 1) lists **My projects** and **Shared with me**; no project code is needed.
+- In step 7 the owner can **share** a project with Octa users (search by name, username or email) or **invite**
+  people by email, as *can view* or *can edit*. Invited people see the project once they register with that email.
+  Viewers cannot save changes; the database enforces this.
 - Forgotten usernames or passwords are handled by email.
 
 The `octa_auth` folder is a copy of the module in the launch repository.

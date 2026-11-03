@@ -131,6 +131,33 @@ def my_projects(session_token: str) -> list[dict]:
     return _rpc("igneosuite_my_projects", {"p_session": session_token}) or []
 
 
+# ---- sharing with other Octa users (owner shares by username or email, as viewer or editor)
+def shared_with_me(session_token: str) -> list[dict]:
+    return _rpc("igneosuite_shared_with_me", {"p_session": session_token}) or []
+
+
+def my_role(session_token: str, project_id: str) -> str | None:
+    """owner / edit / view / None for the signed-in user."""
+    return _rpc("igneosuite_my_role", {"p_session": session_token, "p_id": project_id})
+
+
+def find_users(session_token: str, query: str) -> list[dict]:
+    return _rpc("igneosuite_find_users", {"p_session": session_token, "p_query": query}) or []
+
+
+def share(session_token: str, project_id: str, people: list[str], role: str) -> dict:
+    return _rpc("igneosuite_share", {"p_session": session_token, "p_id": project_id, "p_people": people,
+                                     "p_role": role}) or {}
+
+
+def shares(session_token: str, project_id: str) -> list[dict]:
+    return _rpc("igneosuite_shares", {"p_session": session_token, "p_id": project_id}) or []
+
+
+def unshare(session_token: str, project_id: str, email: str) -> bool:
+    return bool(_rpc("igneosuite_unshare", {"p_session": session_token, "p_id": project_id, "p_email": email}))
+
+
 def parse_code(code: str) -> dict | None:
     code = (code or "").strip()
     if "~" not in code:

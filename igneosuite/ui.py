@@ -1,5 +1,6 @@
 """Streamlit interface. `render(user=None)` draws the whole app so a future portal can embed it."""
 from __future__ import annotations
+import html
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -821,6 +822,9 @@ def page_save():
     if not store.enabled():
         st.info("The database connection is not set up for this installation.")
         return
+    if _role() == "view":
+        _view_only_note()
+        return
     st.write("Your work is saved as a private project: the data, and the settings and results of every step you "
              "have saved. Reopen it later to continue where you stopped, without repeating the calculations.")
     pm = S.get("project_meta", {})
@@ -851,6 +855,125 @@ def page_save():
                                   affiliation=aff.strip() or None, licence=lic, shared=share)
             do_save(["load", "missing", "test", "fill", "geometry", "clusters"], meta_changed=True)
     project_info()
+    share_box()
+
+
+ROLE_LABEL = {"view": "Can view", "edit": "Can edit"}
+
+
+def share_box():
+    """Owner: share the saved project with Octa users and/or invite people by email."""
+    tok = _session_token()
+    p = S.get("project")
+    if not tok or not p:
+        if tok:
+            st.caption("Save the project first; then you can share it with other people.")
+        return
+    try:
+        role = store.my_role(tok, p["id"])
+    except Exception:
+        role = None
+    if role != "owner":
+        if role == "edit":
+            st.caption("This project was shared with you. Only its owner can share it further.")
+        return
+    st.divider()
+    st.subheader("👥 Share this project")
+    st.caption("People you share with see the project under *Shared with me* in step 1. "
+               "**Can view**: they can open it and look at every step. **Can edit**: they can also save changes.")
+    a, b = st.columns([3, 1], vertical_alignment="bottom")
+    q = a.text_input("Find Octa users (name, username or email)", key="share_q")
+    if b.button("Search", key="share_search") and len(q.strip()) >= 3:
+        try:
+            S._share_found = store.find_users(tok, q.strip())
+        except Exception as e:
+            st.error(str(e))
+    found = {u["username"]: f"{u['name'] or u['username']} ({u['username']})"
+                            + (f" · {u['affiliation']}" if u.get("affiliation") else "")
+             for u in S.get("_share_found", [])}
+    if "share_q" in S and S.get("_share_found") == [] and q.strip():
+        st.caption("No Octa user matches. You can invite them by email below.")
+    picked = st.multiselect("Octa users to share with", list(found), format_func=found.get, key="share_pick") \
+        if found else []
+    emails = st.text_area("And/or invite by email (one per line; people without an Octa account get an invitation "
+                          "and see the project after they register with that email)", key="share_emails", height=80)
+    role_new = st.radio("Access", list(ROLE_LABEL), format_func=ROLE_LABEL.get, horizontal=True, key="share_role")
+    if st.button("Share", type="primary", key="share_go"):
+        people = list(picked) + [e.strip() for e in emails.replace(",", "\n").splitlines() if e.strip()]
+        if not people:
+            st.error("Choose an Octa user or type an email address.")
+        else:
+            try:
+                out = store.share(tok, p["id"], people, role_new)
+            except Exception as e:
+                out = {"ok": False, "error": str(e)}
+            if not out.get("ok"):
+                st.error(out.get("error", "Sharing failed."))
+            else:
+                _share_emails(out, role_new)
+                for k in ("share_pick", "share_emails", "_share_found", "share_q"):
+                    S.pop(k, None)
+                st.rerun()
+    if S.get("_share_msg"):
+        kind, msg = S.pop("_share_msg")
+        getattr(st, kind)(msg)
+    try:
+        current = store.shares(tok, p["id"])
+    except Exception:
+        current = []
+    if current:
+        st.markdown("**Shared with**")
+        for x in current:
+            c1, c2, c3 = st.columns([4, 1.4, 1], vertical_alignment="center")
+            who = f"{x['name']} ({x['username']})" if x.get("name") else (x.get("username") or x["email"])
+            c1.markdown(f"{who} · {x['email']}" + ("" if x.get("registered") else " · *invited, no account yet*"))
+            c2.caption(ROLE_LABEL.get(x["role"], x["role"]))
+            if c3.button("Remove", key=f"unshare_{x['email']}"):
+                store.unshare(tok, p["id"], x["email"])
+                st.rerun()
+
+
+def _share_emails(out, role):
+    """Tell the people a project was shared with; invite those without an account."""
+    added = [x for x in out.get("added", []) if x.get("status") in ("user", "invited")]
+    unknown = [x["person"] for x in out.get("added", []) if x.get("status") == "unknown"]
+    sent, failed = 0, 0
+    try:
+        from octa_auth import mail
+        can_mail = mail.enabled()
+    except Exception:
+        can_mail = False
+    by, title = out.get("by") or "An IgneoSuite user", out.get("project") or "a project"
+    access = "look at" if role == "view" else "look at and work on"
+    for x in added if can_mail else []:
+        try:
+            if x["status"] == "user":
+                mail.send(x["email"], f"{by} shared an IgneoSuite project with you",
+                          [f"Dear {html.escape(x.get('name') or x.get('username') or '')},".replace("Dear ,", "Hello,"),
+                           f"{html.escape(by)} shared the IgneoSuite project <b>{html.escape(title)}</b> with you. "
+                           f"You can {access} it.",
+                           "Log in to IgneoSuite and open it from <i>📂 Open a saved project → Shared with me</i> in step 1."],
+                          button=("Open IgneoSuite", WEB_APP))
+            else:
+                mail.send(x["email"], f"{by} invited you to an IgneoSuite project",
+                          ["Hello,",
+                           f"{html.escape(by)} invited you to the IgneoSuite project <b>{html.escape(title)}</b>, so "
+                           f"that you can {access} it. IgneoSuite is a free tool for testing, filling and exploring "
+                           "gaps in igneous geochemical data.",
+                           f"Create a free Octa account with this email address ({html.escape(x['email'])}); the "
+                           "project then appears under <i>Shared with me</i> in step 1."],
+                          button=("Create my account", WEB_APP.rstrip("/") + "/?register=1"))
+            sent += 1
+        except Exception:
+            failed += 1
+    msg = f"Shared with {len(added)} {'person' if len(added) == 1 else 'people'}."
+    if can_mail and sent:
+        msg += f" {sent} email{'s' if sent != 1 else ''} sent."
+    if failed or (added and not can_mail):
+        msg += " Some people could not be emailed; tell them yourself that the project is waiting for them."
+    if unknown:
+        msg += f" Not found (not a username or email): {', '.join(unknown)}."
+    S._share_msg = ("warning" if unknown or failed else "success", msg)
 
 
 # ---------------------------------------------------------------- saving and reopening
@@ -984,15 +1107,29 @@ def project_info():
     st.success(f"Saved project: **{S.get('project_meta', {}).get('title', '')}**")
     if _session_token():
         st.markdown("The project is kept in **your account**: open it again from *📂 Open a saved project* in "
-                    "step 1 whenever you are logged in.")
+                    "step 1 whenever you are logged in. To work on it with others, share it below.")
+        return
     if store.by_account(p):
         return
-    st.markdown("You can also keep this page's address (it contains your project), or note your "
-                "**project code**. Anyone with the code can open the project, so keep it private."
-                if _session_token() else
-                "To continue later, keep this page's address (it now contains your project), or note your "
+    st.markdown("To continue later, keep this page's address (it now contains your project), or note your "
                 "**project code**. Anyone with the code can open the project, so keep it private.")
     st.code(store.project_code(p), language=None)
+
+
+def _role():
+    """owner / edit / view for the open project (None when there is no account)."""
+    p = S.get("project")
+    if not p:
+        return "owner"
+    if p.get("role"):
+        return p["role"]
+    return None if store.by_account(p) else "owner"
+
+
+def _view_only_note():
+    p = S.get("project", {})
+    st.info(f"🔒 You can look at this project, which {p.get('owner') or 'its owner'} shared with you, but not "
+            "save changes to it. Ask the owner for edit rights if you need them.")
 
 
 def save_bar(step):
@@ -1000,6 +1137,9 @@ def save_bar(step):
     st.divider()
     if not store.enabled():
         st.caption("Saving is not set up for this installation.")
+        return
+    if _role() == "view":
+        _view_only_note()
         return
     saved = S.get("saved", {}).get(step, 0)
     changed = S.get("changed", {}).get("test_scattered" if step == "test" else step, 0)
@@ -1034,37 +1174,54 @@ def save_bar(step):
         st.rerun()
 
 
+def _project_row(d, key, label_extra=""):
+    c1, c2 = st.columns([5, 1], vertical_alignment="center")
+    when = str(d.get("updated_at") or "")[:16].replace("T", " ")
+    last = STEP_LABEL.get(d.get("last_step") or "", d.get("last_step") or "")
+    title = (d.get("title") or "Untitled").replace("*", "").replace("_", " ")
+    c1.markdown(f"**{title}**{label_extra} · {d.get('n_samples') or 0:,} samples"
+                f"{' · last saved: ' + last if last else ''} · {when}")
+    return c2.button("Open", key=key)
+
+
 def open_project_box():
     if not store.enabled():
         return
     tok = _session_token()
     with st.expander("📂 Open a saved project", expanded=bool(tok) and "X" not in S):
-        if tok:
-            try:
-                mine = store.my_projects(tok)
-            except Exception as e:
-                mine = []
-                st.caption(f"Your saved projects could not be listed. {e}")
-            if mine:
-                st.markdown("**My saved projects**")
-                for d in mine[:30]:
-                    c1, c2 = st.columns([5, 1], vertical_alignment="center")
-                    when = str(d.get("updated_at") or "")[:16].replace("T", " ")
-                    last = STEP_LABEL.get(d.get("last_step") or "", d.get("last_step") or "")
-                    c1.markdown(f"**{d.get('title') or 'Untitled'}** · {d.get('n_samples') or 0:,} samples"
-                                f"{' · last saved: ' + last if last else ''} · {when}")
-                    if c2.button("Open", key=f"mine_{d['id']}"):
-                        open_project({"id": d["id"], "key": store.account_key(tok)})
-                st.markdown("**Or open with a project code**")
-            else:
-                st.caption("Projects you save while logged in will be listed here.")
-        code = st.text_input("Project code", placeholder="paste the code you got when you saved", key="open_code")
-        if st.button("Open", key="open_btn"):
-            p = store.parse_code(code)
-            if not p:
-                st.error("That does not look like a project code.")
-            else:
-                open_project(p)
+        if not tok:
+            if S.get("_accounts"):
+                st.caption("Log in to see your projects and the projects others shared with you.")
+                return
+            # installations without Octa accounts: open with the code given when the project was saved
+            code = st.text_input("Project code", placeholder="paste the code you got when you saved", key="open_code")
+            if st.button("Open", key="open_btn"):
+                p = store.parse_code(code)
+                if not p:
+                    st.error("That does not look like a project code.")
+                else:
+                    open_project(p)
+            return
+        try:
+            mine, shared = store.my_projects(tok), store.shared_with_me(tok)
+        except Exception as e:
+            st.caption(f"Your projects could not be listed. {e}")
+            return
+        st.markdown("**My projects**")
+        if not mine:
+            st.caption("Projects you save while logged in will be listed here.")
+        for d in mine[:50]:
+            if _project_row(d, f"mine_{d['id']}"):
+                open_project({"id": d["id"], "key": store.account_key(tok), "role": "owner"})
+        st.markdown("**Shared with me**")
+        if not shared:
+            st.caption("Projects other IgneoSuite users share with you will be listed here.")
+        for d in shared[:50]:
+            who = d.get("owner") or d.get("owner_username") or "another user"
+            badge = "can edit" if d.get("role") == "edit" else "view only"
+            if _project_row(d, f"shared_{d['id']}", f" · from {who} · {badge}"):
+                open_project({"id": d["id"], "key": store.account_key(tok), "role": d.get("role", "view"),
+                              "owner": who})
 
 
 def open_project(p):
@@ -1272,6 +1429,7 @@ def render(user=None, app=None):
     stored under that user. With `user=None` rows are anonymous.
     """
     S["_user"] = user
+    S["_accounts"] = app is not None
     telemetry.session_id()
     if "_pending_open" in S:
         p, out = S.pop("_pending_open")
@@ -1281,6 +1439,11 @@ def render(user=None, app=None):
     if store.enabled() and "project" in qp and ("key" in qp or tok) and \
             S.get("project", {}).get("id") != qp["project"] and not S.get("_resume_failed"):
         p = {"id": qp["project"], "key": qp.get("key") or store.account_key(tok)}
+        if "key" not in qp:
+            try:
+                p["role"] = store.my_role(tok, p["id"]) or "view"
+            except Exception:
+                p["role"] = "view"
         try:
             with st.spinner("Opening your saved project…"):
                 restore(p, store.load(p, user))
