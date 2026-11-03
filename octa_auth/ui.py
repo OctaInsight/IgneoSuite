@@ -201,7 +201,6 @@ def require_login(app: App, required: bool = True) -> dict | None:
     if not required and not _state().get("want_login") and not st.query_params.get("register"):
         return None
     _page_wrap(app, auth_page)
-    print(f"[octa_auth] login page drawn for {app.id}", file=__import__("sys").stderr, flush=True)
     st.stop()
 
 
