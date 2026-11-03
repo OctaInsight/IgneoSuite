@@ -141,7 +141,7 @@ Please cite the paper and the software (GitHub's "Cite this repository" button u
 > Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M., 2026. When simpler
 > wins: recovering the structure of incomplete geochemical data. Computers & Geosciences (submitted).
 
-> Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu Anbar, M., Masoud, A.E., Abu-Alam, N.E.T., Ghoneim, M.F., 2026.
+> Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M., 2026.
 > IgneoSuite 1.0.0: an open-source application for testing, filling and exploring gaps in igneous geochemical data.
 > Zenodo. https://doi.org/10.5281/zenodo.23919430. Web app: https://igneosuite.streamlit.app/
 

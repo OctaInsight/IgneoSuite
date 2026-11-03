@@ -18,14 +18,14 @@ authors:
     given-names: "Alparslan"
   - family-names: "Khalil"
     given-names: "Thoraya T."
-  - family-names: "Abu Anbar"
+  - family-names: "Abu-Anber"
     given-names: "Mohamed"
-  - family-names: "Masoud"
-    given-names: "Ahmed E."
+  - family-names: "Said"
+    given-names: "Ahmed"
   - family-names: "Abu-Alam"
     given-names: "Nour El-Din T."
   - family-names: "Ghoneim"
-    given-names: "Mohamed F."
+    given-names: "Mohamed"
 identifiers:
   - type: doi
     value: "10.5281/zenodo.23919430"

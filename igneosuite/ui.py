@@ -1164,7 +1164,7 @@ SOFTWARE_TITLE = ("IgneoSuite 1.0.0: an open-source application for testing, fil
 
 
 def cite_software():
-    return ("Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu Anbar, M., Masoud, A.E., Abu-Alam, N.E.T., Ghoneim, M.F., "
+    return ("Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M., "
             f"2026. {SOFTWARE_TITLE}. Zenodo. https://doi.org/{DOI}. Web app: {WEB_APP}")
 
 
@@ -1176,8 +1176,8 @@ def _bibtex():
         "  title   = {When simpler wins: recovering the structure of incomplete geochemical data},\n"
         "  journal = {Computers \\& Geosciences},\n  year    = {2026},\n  note    = {Submitted}\n}\n\n"
         "@software{AbuAlam2026IgneoSuite,\n"
-        "  author    = {Abu-Alam, Tamer S. and G{\\\"u}zey, Alparslan and Khalil, Thoraya T. and Abu Anbar, Mohamed and\n"
-        "               Masoud, Ahmed E. and Abu-Alam, Nour El-Din T. and Ghoneim, Mohamed F.},\n"
+        "  author    = {Abu-Alam, Tamer S. and G{\\\"u}zey, Alparslan and Khalil, Thoraya T. and Abu-Anber, Mohamed and\n"
+        "               Said, Ahmed and Abu-Alam, Nour El-Din T. and Ghoneim, Mohamed},\n"
         f"  title     = {{{SOFTWARE_TITLE}}},\n"
         f"  version   = {{{__version__}}},\n  year      = {{2026}},\n  publisher = {{Zenodo}},\n"
         f"  doi       = {{{DOI}}},\n  url       = {{https://doi.org/{DOI}}},\n"
