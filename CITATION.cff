@@ -1,33 +1,56 @@
 cff-version: 1.2.0
-message: "If you use IgneoSuite, please cite the paper below and the software."
-title: "IgneoSuite"
+message: "If you use IgneoSuite, please cite it as below, together with the paper that describes the method."
+type: software
+title: "IgneoSuite 1.0.0: an open-source application for testing, filling and exploring gaps in igneous geochemical data"
 version: "1.0.0"
 date-released: "2026-11-03"
-license: AGPL-3.0-only
+doi: "10.5281/zenodo.23919430"
+url: "https://igneosuite.streamlit.app/"
 repository-code: "https://github.com/OctaInsight/IgneoSuite"
-authors:
-  - name: "Octa Insight"
+license: AGPL-3.0-only
 publisher:
-  name: "Octa Systems"
+  name: "Zenodo"
 keywords: [geochemistry, igneous rocks, missing data, imputation, k-nearest neighbours, Streamlit]
-preferred-citation:
-  type: article
-  title: "When simpler wins: recovering the structure of incomplete geochemical data"
-  journal: "Computers & Geosciences"
-  year: 2026
-  notes: "Submitted"
-  authors:
-    - family-names: "Abu-Alam"
-      given-names: "Tamer S."
-    - family-names: "Güzey"
-      given-names: "Alparslan"
-    - family-names: "Khalil"
-      given-names: "Thoraya T."
-    - family-names: "Abu-Anber"
-      given-names: "Mohamed"
-    - family-names: "Said"
-      given-names: "Ahmed"
-    - family-names: "Abu-Alam"
-      given-names: "Nour El-Din T."
-    - family-names: "Ghoneim"
-      given-names: "Mohamed"
+authors:
+  - family-names: "Abu-Alam"
+    given-names: "Tamer S."
+  - family-names: "Güzey"
+    given-names: "Alparslan"
+  - family-names: "Khalil"
+    given-names: "Thoraya T."
+  - family-names: "Abu Anbar"
+    given-names: "Mohamed"
+  - family-names: "Masoud"
+    given-names: "Ahmed E."
+  - family-names: "Abu-Alam"
+    given-names: "Nour El-Din T."
+  - family-names: "Ghoneim"
+    given-names: "Mohamed F."
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.23919430"
+    description: "Archived version 1.0.0 on Zenodo"
+  - type: url
+    value: "https://igneosuite.streamlit.app/"
+    description: "Web application"
+references:
+  - type: article
+    title: "When simpler wins: recovering the structure of incomplete geochemical data"
+    journal: "Computers & Geosciences"
+    year: 2026
+    notes: "Submitted"
+    authors:
+      - family-names: "Abu-Alam"
+        given-names: "Tamer S."
+      - family-names: "Güzey"
+        given-names: "Alparslan"
+      - family-names: "Khalil"
+        given-names: "Thoraya T."
+      - family-names: "Abu-Anber"
+        given-names: "Mohamed"
+      - family-names: "Said"
+        given-names: "Ahmed"
+      - family-names: "Abu-Alam"
+        given-names: "Nour El-Din T."
+      - family-names: "Ghoneim"
+        given-names: "Mohamed"

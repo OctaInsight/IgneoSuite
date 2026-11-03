@@ -1157,9 +1157,15 @@ CITE_PAPER = ("Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A.
               "Computers & Geosciences (submitted).")
 
 
+DOI = "10.5281/zenodo.23919430"
+WEB_APP = "https://igneosuite.streamlit.app/"
+SOFTWARE_TITLE = ("IgneoSuite 1.0.0: an open-source application for testing, filling and exploring gaps in "
+                  "igneous geochemical data")
+
+
 def cite_software():
-    return (f"Octa Insight, 2026. IgneoSuite, version {__version__} [software]. Octa Systems. "
-            f"{SOURCE_URL}")
+    return ("Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu Anbar, M., Masoud, A.E., Abu-Alam, N.E.T., Ghoneim, M.F., "
+            f"2026. {SOFTWARE_TITLE}. Zenodo. https://doi.org/{DOI}. Web app: {WEB_APP}")
 
 
 def _bibtex():
@@ -1169,10 +1175,13 @@ def _bibtex():
         "             Said, Ahmed and Abu-Alam, Nour El-Din T. and Ghoneim, Mohamed},\n"
         "  title   = {When simpler wins: recovering the structure of incomplete geochemical data},\n"
         "  journal = {Computers \\& Geosciences},\n  year    = {2026},\n  note    = {Submitted}\n}\n\n"
-        "@software{IgneoSuite,\n"
-        "  author    = {{Octa Insight}},\n  title     = {IgneoSuite},\n"
-        f"  version   = {{{__version__}}},\n  year      = {{2026}},\n  publisher = {{Octa Systems}},\n"
-        f"  license   = {{AGPL-3.0-only}},\n  url       = {{{SOURCE_URL}}}\n}}\n")
+        "@software{AbuAlam2026IgneoSuite,\n"
+        "  author    = {Abu-Alam, Tamer S. and G{\\\"u}zey, Alparslan and Khalil, Thoraya T. and Abu Anbar, Mohamed and\n"
+        "               Masoud, Ahmed E. and Abu-Alam, Nour El-Din T. and Ghoneim, Mohamed F.},\n"
+        f"  title     = {{{SOFTWARE_TITLE}}},\n"
+        f"  version   = {{{__version__}}},\n  year      = {{2026}},\n  publisher = {{Zenodo}},\n"
+        f"  doi       = {{{DOI}}},\n  url       = {{https://doi.org/{DOI}}},\n"
+        f"  note      = {{Web app: {WEB_APP}}},\n  license   = {{AGPL-3.0-only}}\n}}\n")
 
 
 def _sidebar_footer():
@@ -1188,13 +1197,17 @@ def _sidebar_footer():
     st.download_button("⬇ BibTeX", _bibtex().encode(), "IgneoSuite_citation.bib", "text/plain", key="cite_bib")
     st.markdown(
         f"<div style='font-size:0.82rem;line-height:1.5;color:#52514e'>"
-        f"<b style='color:#0b0b0b'>IgneoSuite {__version__}</b> · Octa Insight<br>"
+        f"<b style='color:#0b0b0b'>IgneoSuite {__version__}</b><br>"
         f"© 2026 Octa Insight · Produced by Octa Systems<br>"
         f"Free software under the <a href='https://www.gnu.org/licenses/agpl-3.0.html' target='_blank'>GNU AGPL v3</a> · "
         f"<a href='{SOURCE_URL}' target='_blank'>Source code</a></div>", unsafe_allow_html=True)
     logo = Path(__file__).parent / "data" / "octa_logo.png"
     if logo.exists():
-        st.image(str(logo), width=120)
+        import base64
+        b64 = base64.b64encode(logo.read_bytes()).decode()
+        # full-resolution image, scaled by the browser so it stays sharp on high-density screens
+        st.markdown(f"<img src='data:image/png;base64,{b64}' alt='Octa Insight' "
+                    f"style='width:150px;height:auto;margin-top:6px;image-rendering:auto'>", unsafe_allow_html=True)
 
 
 def render(user=None):
