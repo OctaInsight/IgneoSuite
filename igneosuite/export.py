@@ -16,6 +16,44 @@ def three_column(ids, id_name, columns, M, est, E) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
+def error_range(est: np.ndarray, E: np.ndarray):
+    """Low and high end of the error band of each estimate.
+
+    The band is [estimate/f, estimate*f]; IgneoSuite reports ± = estimate*(f - 1/f)/2, so
+    f = r + sqrt(r^2 + 1) with r = ±/estimate."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r = E / est
+        f = r + np.sqrt(r * r + 1)
+        return est / f, est * f
+
+
+def full_table(ids, id_name, meta: pd.DataFrame, columns, M, est, E, cl_ref=None, cl_fill=None,
+               band_pct: int = 68) -> pd.DataFrame:
+    """One row per sample: ID, location, age, reference, comment, clusters before and after filling, and for every
+    element the measured value, the estimate, its ± error and its error range."""
+    n = M.shape[0]
+    data = {id_name: ids}
+    for key, name in (("latitude", "Latitude"), ("longitude", "Longitude"), ("age_ma", "Age (Ma)"),
+                      ("reference", "Reference"), ("comment", "Comment")):
+        data[name] = meta[key].values if meta is not None and key in meta else [None] * n
+    data["Cluster before filling"] = cl_ref if cl_ref is not None else [None] * n
+    data["Cluster after filling"] = cl_fill if cl_fill is not None else [None] * n
+    lo, hi = error_range(est, E) if est is not None and E is not None else (None, None)
+    for j, c in enumerate(columns):
+        miss = np.isnan(M[:, j])
+        data[f"{c} measured"] = np.where(miss, np.nan, M[:, j])
+        if est is not None:
+            data[f"{c} estimated"] = np.where(miss, est[:, j], np.nan)
+        if E is not None:
+            data[f"{c} ± error"] = np.where(miss, E[:, j], np.nan)
+            data[f"{c} low ({band_pct}%)"] = np.where(miss, lo[:, j], np.nan)
+            data[f"{c} high ({band_pct}%)"] = np.where(miss, hi[:, j], np.nan)
+    df = pd.DataFrame(data)
+    for c in ("Cluster before filling", "Cluster after filling"):
+        df[c] = pd.array(df[c], dtype="Int64")
+    return df
+
+
 def complete_matrix(ids, id_name, columns, est) -> pd.DataFrame:
     df = pd.DataFrame(est, columns=columns)
     df.insert(0, id_name, ids)

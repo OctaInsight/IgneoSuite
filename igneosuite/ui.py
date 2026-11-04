@@ -724,8 +724,38 @@ def page_cluster():
                                "text/csv", key="fig_clu_3d_csv")
         else:
             st.info("The 3-D view needs at least three reference variables and a fresh run of the comparison.")
+        st.markdown("#### Download")
+        a, b = _sample_clusters()
+        band = int(round(100 * float(S.get("q") or 0.68)))
+        full = export.full_table(S.ids, S.id_col, S.meta, cols, M, S.est, S.get("E"), a, b, band)
+        n_in = int(pd.notna(full["Cluster after filling"]).sum())
+        notes = [
+            "Produced with IgneoSuite (cluster comparison, step 6).",
+            f"One row per sample ({len(full):,} samples; {n_in:,} were clustered).",
+            f"Cluster before filling: k-means (k = {c['k']}) on the measured values of the reference variables "
+            f"({', '.join(c['base'])}); only samples with all of them measured.",
+            f"Cluster after filling: k-means (k = {c['k']}) on the gap-filled values of {len(c['extra'])} variables; "
+            "cluster numbers are matched to the reference run.",
+            "Empty cluster cells: the sample was not in the comparison (a reference variable was missing).",
+            f"For each element: measured value; estimated value (only where the measurement was missing, "
+            f"method: {S.get('fill_method')}); ± error; and the {band}% error range (low – high).",
+            "± error = estimate × (f − 1/f)/2 and range = [estimate/f, estimate × f], where f = 10^q and q is the "
+            f"{band}th percentile of |log10(estimate/true)| for that element in the masking test.",
+            "Cite: Abu-Alam, T.S., et al. When simpler wins: recovering the structure of incomplete geochemical data. "
+            "Computers & Geosciences (submitted).",
+        ]
+        sheets = {"Samples": full, "Cluster_comparison": ct}
+        c1, c2 = st.columns(2)
+        c1.download_button("⬇ All data and clusters (Excel)", export.to_excel(sheets, notes),
+                           "igneosuite_clusters_full.xlsx",
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary",
+                           key="clu_full_xlsx", on_click=telemetry.event, args=("export", {"format": "clusters_xlsx"}, _user()))
         out = pd.DataFrame({S.id_col: np.asarray(S.ids)[c["rows"]], "Reference cluster": c["lr"], "Gap-filled cluster": c["lf"]})
-        st.download_button("Download cluster labels (CSV)", out.to_csv(index=False).encode(), "igneosuite_clusters.csv", "text/csv")
+        c2.download_button("Cluster labels only (CSV)", out.to_csv(index=False).encode(), "igneosuite_clusters.csv",
+                           "text/csv", key="clu_csv")
+        st.caption("The Excel file has one row per sample: ID, latitude, longitude, age, reference, comment, the "
+                   "cluster before and after filling, and for every element the measured value, the estimate, its "
+                   f"± error and its {band}% range. Saving this step stores all of it in your project.")
     if "clu" in S or "kscan" in S:
         save_bar("clusters")
 
@@ -991,10 +1021,26 @@ def _available(step) -> bool:
             "geometry": "geo" in S, "clusters": "clu" in S or "kscan" in S}[step]
 
 
+def _sample_clusters():
+    """Cluster number of every sample before and after filling (None where a sample was not clustered)."""
+    c = S.get("clu")
+    if not c:
+        return None, None
+    n = len(S.ids)
+    rows = np.asarray(c["rows"])
+    if rows.dtype != bool:                      # restored projects keep the row indices
+        mask = np.zeros(n, bool); mask[rows.astype(int)] = True; rows = mask
+    a = np.full(n, None, dtype=object); b = np.full(n, None, dtype=object)
+    a[rows] = [int(v) for v in c["lr"]]
+    b[rows] = [int(v) for v in c["lf"]]
+    return a, b
+
+
 def _rows_for_samples():
     cols = list(S.X.columns)
+    a, b = _sample_clusters()
     rows = submit_mod.sample_rows("x", S.ids, cols, S.X.values.astype(float), S.meta,
-                                  S.get("est"), S.get("E"))
+                                  S.get("est"), S.get("E"), a, b)
     for r, i in zip(rows, range(len(rows))):
         r.pop("dataset_id", None)
         for c in ("reference", "comment"):
@@ -1074,6 +1120,11 @@ def do_save(steps, meta_changed=False):
                     st.write(f"{STEP_LABEL[step].capitalize()}: settings and results")
                     params, results = _pack(part)
                     store.save_step(p, part, params, results, user)
+                    if part == "clusters":
+                        a, b = _sample_clusters()
+                        if a is not None:
+                            store.save_clusters(p, [dict(row_number=i + 1, a=a[i], b=b[i]) for i in range(len(a))
+                                                    if a[i] is not None], user)
                 saved[step] = time.time()
             if "test" in todo and not S.get("val_block"):
                 store.delete_step(p, "test_block", user)

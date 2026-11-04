@@ -28,6 +28,13 @@ class FakeDB:
             self.steps.setdefault(pid, {})[payload["p_step"]] = {"params": payload["p_params"],
                                                                  "results": payload["p_results"]}
             self.d[pid]["last_step"] = payload["p_step"]
+        elif fn == "igneosuite_save_clusters":
+            by_row = {r["row_number"]: r for r in self.samples[pid]}
+            if payload["p_first"]:
+                for r in self.samples[pid]:
+                    r["cluster_reference"] = r["cluster_filled"] = None
+            for x in payload["p_rows"]:
+                by_row[x["row_number"]].update(cluster_reference=x["a"], cluster_filled=x["b"])
         elif fn == "igneosuite_delete_step":
             self.steps.get(pid, {}).pop(payload["p_step"], None)
         elif fn == "igneosuite_load_dataset":
@@ -98,6 +105,17 @@ def test_save_and_reopen(tmp_path):
     assert "geo" in at.session_state
     at.button(key="save_geometry").click().run()
     assert "geometry" in db.steps[pid]
+    # step 6: clusters; the Excel download and the per-sample cluster numbers in the database
+    at.sidebar.radio[0].set_value("6 · Clusters").run()
+    next(b for b in at.button if b.label == "Run comparison").click().run()
+    assert not at.exception, at.exception
+    assert any(b.label == "⬇ All data and clusters (Excel)" for b in at.get("download_button"))
+    at.button(key="save_clusters").click().run()
+    assert not at.exception, at.exception
+    clu = at.session_state["clu"]
+    stored = [r for r in db.samples[pid] if r.get("cluster_filled") is not None]
+    assert len(stored) == int(np.asarray(clu["rows"]).sum())
+    assert all(r.get("estimate_range") is not None for r in db.samples[pid] if r.get("estimated"))
     score = at.session_state["val_scat"]["score"].copy()
     est = at.session_state["est"].copy()
     geo_m = dict(at.session_state["geo"]["metrics"])
@@ -108,7 +126,8 @@ def test_save_and_reopen(tmp_path):
     at2.run()
     assert not at2.exception, at2.exception
     s2 = at2.session_state
-    assert s2["step"] == "5 · Data geometry"
+    assert s2["step"] == "6 · Clusters"
+    assert np.array_equal(np.asarray(s2["clu"]["lf"]), np.asarray(clu["lf"]))
     assert np.allclose(s2["X"].values, X.values, equal_nan=True)
     assert np.allclose(s2["est"], est, equal_nan=True)
     pd.testing.assert_frame_equal(s2["val_scat"]["score"], score, check_dtype=False, check_names=False)
@@ -116,7 +135,7 @@ def test_save_and_reopen(tmp_path):
     assert s2["geo"]["metrics"] == geo_m
     r3 = list(s2["meta"].reference[:3]); assert r3[:2] == ["Ref A", "Ref B"] and pd.isna(r3[2])
     for step in ["1 · Load data", "2 · Missing values", "3 · Test methods", "4 · Fill and export",
-                 "5 · Data geometry", "7 · Save & share"]:
+                 "5 · Data geometry", "6 · Clusters", "7 · Save & share"]:
         at2.sidebar.radio[0].set_value(step).run(); assert not at2.exception, (step, at2.exception)
     # wrong key is refused
     at3 = AppTest.from_file(str(script), default_timeout=300)

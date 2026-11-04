@@ -1,3 +1,4 @@
+import pytest
 import os, sys, numpy as np, pandas as pd
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT); sys.path.insert(0, os.path.join(ROOT, "tests"))
@@ -112,3 +113,26 @@ def test_geometry():
     assert 1 <= m["pcs_80"] <= X.shape[1] and 0 < m["hopkins"] < 1 and m["twonn_dimension"] > 0
     assert abs(m["same_reference_chance"] - 1 / 3) < 0.01
     assert g["loadings"].shape == (X.shape[1], 3) and g["scores"].shape == (len(X), 3)
+
+
+def test_full_table_ranges_and_clusters():
+    import numpy as np, pandas as pd
+    from igneosuite import export
+    M = np.array([[50.0, np.nan], [np.nan, 2.0], [55.0, 3.0]])
+    est = np.array([[50.0, 4.0], [52.0, 2.0], [55.0, 3.0]])
+    f = 10 ** 0.1
+    E = np.where(np.isnan(M), est * (f - 1 / f) / 2, np.nan)
+    meta = pd.DataFrame({"latitude": [1.0, 2.0, 3.0], "longitude": [4.0, 5.0, 6.0], "age_ma": [10.0, None, 30.0],
+                         "reference": ["A", None, "C"], "comment": [None, "x", None]})
+    t = export.full_table(["s1", "s2", "s3"], "Sample", meta, ["SiO2", "Rb"], M, est, E,
+                          np.array([1, None, 2], dtype=object), np.array([1, None, 1], dtype=object))
+    assert list(t.columns[:8]) == ["Sample", "Latitude", "Longitude", "Age (Ma)", "Reference", "Comment",
+                                   "Cluster before filling", "Cluster after filling"]
+    assert t.loc[0, "Rb low (68%)"] == pytest.approx(4.0 / f) and t.loc[0, "Rb high (68%)"] == pytest.approx(4.0 * f)
+    assert np.isnan(t.loc[0, "SiO2 estimated"]) and t.loc[1, "SiO2 estimated"] == 52.0
+    assert pd.isna(t.loc[1, "Cluster before filling"]) and t.loc[2, "Cluster before filling"] == 2
+    from igneosuite.submit import sample_rows
+    rows = sample_rows("x", ["s1", "s2", "s3"], ["SiO2", "Rb"], M, meta.assign(latitude_original="", longitude_original=""),
+                       est, E, np.array([1, None, 2], dtype=object), np.array([1, None, 1], dtype=object))
+    assert rows[0]["estimate_range"]["Rb"] == pytest.approx([4.0 / f, 4.0 * f])
+    assert rows[1]["cluster_reference"] is None and rows[2]["cluster_filled"] == 1

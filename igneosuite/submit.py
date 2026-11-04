@@ -21,9 +21,13 @@ def _num(v):
 
 
 def sample_rows(dataset_id: str, ids, columns, M: np.ndarray, meta: pd.DataFrame,
-                est: np.ndarray | None = None, E: np.ndarray | None = None) -> list[dict]:
+                est: np.ndarray | None = None, E: np.ndarray | None = None,
+                cl_ref=None, cl_fill=None) -> list[dict]:
     """One dict per sample: author's ID, location, age, measured values and (optionally) estimates."""
     rows = []
+    if est is not None and E is not None:
+        from .export import error_range
+        lo, hi = error_range(est, E)
     for i in range(M.shape[0]):
         miss = np.isnan(M[i])
         r = dict(dataset_id=dataset_id, row_number=i + 1, sample_id=str(ids[i])[:200],
@@ -36,6 +40,12 @@ def sample_rows(dataset_id: str, ids, columns, M: np.ndarray, meta: pd.DataFrame
             r["estimated"] = {c: float(est[i, j]) for j, c in enumerate(columns) if miss[j] and np.isfinite(est[i, j])}
             r["estimate_error"] = ({c: float(E[i, j]) for j, c in enumerate(columns) if miss[j] and np.isfinite(E[i, j])}
                                    if E is not None else None)
+            if E is not None:
+                r["estimate_range"] = {c: [float(lo[i, j]), float(hi[i, j])] for j, c in enumerate(columns)
+                                       if miss[j] and np.isfinite(lo[i, j]) and np.isfinite(hi[i, j])}
+        if cl_ref is not None:
+            r["cluster_reference"] = None if cl_ref[i] is None or pd.isna(cl_ref[i]) else int(cl_ref[i])
+            r["cluster_filled"] = None if cl_fill[i] is None or pd.isna(cl_fill[i]) else int(cl_fill[i])
         rows.append(r)
     return rows
 

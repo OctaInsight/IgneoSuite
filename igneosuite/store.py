@@ -207,6 +207,13 @@ def save_estimates(p, rows: list[dict], user=None, progress=None):
             progress(min(1.0, (k + BATCH) / len(rows)))
 
 
+def save_clusters(p, labels: list[dict], user=None):
+    """labels: [{"row_number", "a" (before filling), "b" (after filling)}]. Clears all numbers first."""
+    for k in range(0, max(len(labels), 1), 5000):
+        _rpc("igneosuite_save_clusters", {"p_id": p["id"], "p_key": p["key"], "p_rows": labels[k:k + 5000],
+                                          "p_first": k == 0}, user)
+
+
 def save_step(p, step: str, params: dict, results: dict, user=None):
     _rpc("igneosuite_save_step", {"p_id": p["id"], "p_key": p["key"], "p_step": step, "p_params": params,
                                   "p_results": results, "p_app_version": __version__}, user)
