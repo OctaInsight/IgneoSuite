@@ -35,6 +35,13 @@ class FakeDB:
                     r["cluster_reference"] = r["cluster_filled"] = None
             for x in payload["p_rows"]:
                 by_row[x["row_number"]].update(cluster_reference=x["a"], cluster_filled=x["b"])
+        elif fn == "igneosuite_save_age_groups":
+            by_row = {r["row_number"]: r for r in self.samples[pid]}
+            if payload["p_first"]:
+                for r in self.samples[pid]:
+                    r["age_group"] = None
+            for x in payload["p_rows"]:
+                by_row[x["row_number"]]["age_group"] = x["g"]
         elif fn == "igneosuite_delete_step":
             self.steps.get(pid, {}).pop(payload["p_step"], None)
         elif fn == "igneosuite_load_dataset":
@@ -89,7 +96,7 @@ def test_save_and_reopen(tmp_path):
     assert not at.exception
     # first save from step 3 creates the project
     at.text_input(key="t_test").set_value("Demo project")
-    at.button[-1].click().run()
+    next(b for b in at.button if b.label == "Save step 3").click().run()
     assert not at.exception, at.exception
     pid = at.session_state["project"]["id"]
     assert len(db.samples[pid]) == len(X) and {"load", "test_scattered", "test_block"} <= set(db.steps[pid])

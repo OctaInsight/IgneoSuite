@@ -8,7 +8,7 @@ import streamlit as st
 from . import __version__
 from .io import read_table, clean_table, guess_columns, guess_meta, read_meta, REE, short_name
 from . import submit as submit_mod
-from . import diagnose, validate, errors, export, cluster, plots, telemetry, jobs, store, geometry, iplots
+from . import diagnose, validate, errors, export, cluster, plots, telemetry, jobs, store, geometry, iplots, agegroups
 from .facts import FACTS
 import time
 from .imputers import METHODS, available_methods, impute, DEEP, HAS_TORCH
@@ -82,8 +82,10 @@ def _world_lines():
     return xs, ys
 
 
-def location_map(key: str):
-    """Interactive map of the samples, drawn without WebGL or online tiles so it shows in every browser."""
+def location_map(key: str, groups=None, group_colours=None, group_order=None, ask=True):
+    """Interactive map of the samples, drawn without WebGL or online tiles so it shows in every browser.
+
+    With `groups` (one label per sample) the points are coloured by group instead of by having an age."""
     import plotly.graph_objects as go
     from .location import map_view
     m = S.meta
@@ -95,11 +97,25 @@ def location_map(key: str):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", fill="toself", fillcolor="#f2efe8",
                              line=dict(color="#8a8882", width=0.7), hoverinfo="skip", showlegend=False))
-    for sel, name, colour in ((~has_age, "Without age", plots.CAT[1]), (has_age, "With age", plots.CAT[0])):
+    if groups is not None:
+        g = np.asarray(groups, dtype=object)
+        order = group_order or list(dict.fromkeys(g))
+        under = [n for n in order if n in (agegroups.NO_AGE, agegroups.OUTSIDE)]
+        main = sorted([n for n in order if n not in under], key=lambda n: -int((g == n).sum()))
+        layers = [(g == name, name, (group_colours or {}).get(name, "#9a9893"))
+                  for name in under + main]     # grey points first, then the largest groups, small ones on top
+        rank = {n: i for i, n in enumerate(order)}
+        d["age"] = [f"{a} · {b}" for a, b in zip(d["age"], g)]
+    else:
+        layers = ((~has_age, "Without age", plots.CAT[1]), (has_age, "With age", plots.CAT[0]))
+    for sel, name, colour in layers:
         if sel.any():
             fig.add_trace(go.Scatter(
+                legendrank=1000 + rank.get(name, 0) if groups is not None else 1000,
                 x=d.lon[sel], y=d.lat[sel], mode="markers", name=f"{name} ({int(sel.sum())})",
-                marker=dict(size=6, color=colour, opacity=0.85, line=dict(width=0.4, color="#0b0b0b")),
+                marker=dict(size=6, color=colour, opacity=(0.85 if groups is None else
+                                                      0.5 if name in (agegroups.NO_AGE, agegroups.OUTSIDE) else 0.9),
+                            line=dict(width=0.4, color="#0b0b0b")),
                 customdata=d[["sample", "age"]][sel].values,
                 hovertemplate="<b>%{customdata[0]}</b><br>%{y:.4f}, %{x:.4f}<br>%{customdata[1]}<extra></extra>"))
     v = map_view(d.lat.values, d.lon.values)
@@ -121,7 +137,11 @@ def location_map(key: str):
                     config={"scrollZoom": True, "displaylogo": False, "displayModeBar": True,
                             "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"]})
     st.caption(f"{len(d)} samples. Scroll or pinch to zoom, drag to move, double-click or the house button to reset. "
-               "Hover over a point to see the sample, its coordinates and its age.")
+               "Hover over a point to see the sample, its coordinates and its age."
+               + (" Click a group in the legend to hide or show it; double-click to show only that group."
+                  if groups is not None else ""))
+    if not ask:
+        return
     opts = list(LOC_ANSWERS)
     cur = S.get("location_check")
     st.radio("Are the sample locations correct?", opts, format_func=LOC_ANSWERS.get, key=key,
@@ -135,13 +155,15 @@ def location_map(key: str):
                        "longitude swapped, a missing minus sign (S or W), or minutes entered as decimals.")
 
 
-def page_load():
+def page_load(with_open=True, header=True):
     from .location import check_locations, read_age
     from .template import build as build_template
-    st.header("Load data")
+    if header:
+        st.header("Load data")
     st.write("Upload a table with one sample per row. Every sample needs a sample ID, latitude and longitude; "
              "age is optional but recommended. None of these are used in calculations.")
-    open_project_box()
+    if with_open:
+        open_project_box()
     st.download_button("Download the Excel template", build_template(), "IgneoSuite_template.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        on_click=telemetry.event, args=("template", {}, _user()),
@@ -167,7 +189,7 @@ def page_load():
         sig = (up.name, up.size, str(sheet))
         if S.get("sig") != sig:
             for k in list(S.keys()):
-                if k not in ("step", "_user", "_sid", "_octa_auth"):
+                if k not in ("step", "_user", "_sid", "_octa_auth", "module", "ex_src"):
                     del S[k]
             st.query_params.clear()
             S.raw = read_table(up, sheet)
@@ -879,7 +901,7 @@ def page_save():
             S.project_meta = dict(title=title.strip(), reference=ref.strip() or None, description=desc.strip() or None,
                                   author_name=name.strip() or None, author_email=email.strip() or None,
                                   affiliation=aff.strip() or None, licence=lic, shared=share)
-            do_save(["load", "missing", "test", "fill", "geometry", "clusters"], meta_changed=True)
+            do_save(["load", "missing", "test", "fill", "geometry", "clusters", "age_groups"], meta_changed=True)
     project_info()
     share_box()
 
@@ -1005,7 +1027,7 @@ def _share_emails(out, role):
 # ---------------------------------------------------------------- saving and reopening
 STEP_PAGES = {"load": 0, "missing": 1, "test_scattered": 2, "test_block": 2, "fill": 3, "geometry": 4, "clusters": 5}
 STEP_LABEL = {"load": "step 1", "missing": "step 2", "test": "step 3", "fill": "step 4", "geometry": "step 5",
-              "clusters": "step 6"}
+              "clusters": "step 6", "age_groups": "the age groups"}
 
 
 def _changed(step):
@@ -1014,7 +1036,8 @@ def _changed(step):
 
 def _available(step) -> bool:
     return {"load": "X" in S, "missing": "X" in S, "test": bool(S.get("val_scat")), "fill": "est" in S,
-            "geometry": "geo" in S, "clusters": "clu" in S or "kscan" in S}[step]
+            "geometry": "geo" in S, "clusters": "clu" in S or "kscan" in S,
+            "age_groups": S.get("age_table") is not None and len(S.age_table) > 0}[step]
 
 
 def _sample_clusters():
@@ -1037,6 +1060,10 @@ def _rows_for_samples():
     a, b = _sample_clusters()
     rows = submit_mod.sample_rows("x", S.ids, cols, S.X.values.astype(float), S.meta,
                                   S.get("est"), S.get("E"), a, b)
+    g = _sample_age_groups()
+    if g is not None:
+        for r, v in zip(rows, g):
+            r["age_group"] = v
     for r, i in zip(rows, range(len(rows))):
         r.pop("dataset_id", None)
         for c in ("reference", "comment"):
@@ -1075,6 +1102,13 @@ def _pack(step):
                        pca_scores=c["P"], pca_explained=c["ev"],
                        crosstab=pd.crosstab(pd.Series(c["lr"], name="reference"), pd.Series(c["lf"], name="filled")))
         return (dict(reference_variables=c.get("base"), filled_variables=c.get("extra"), k=c.get("k")), res)
+    if step == "age_groups":
+        g = _sample_age_groups()
+        return (dict(S.get("age_params", {}), table=S.age_table.to_dict(orient="records")),
+                dict(stats=agegroups.stats(S.meta.age_ma.values),
+                     counts=agegroups.counts(agegroups.assign(S.meta.age_ma.values, S.age_table), S.age_table)
+                     .to_dict(orient="records"),
+                     n_grouped=int(sum(v is not None for v in g))))
     raise KeyError(step)
 
 
@@ -1116,6 +1150,10 @@ def do_save(steps, meta_changed=False):
                     st.write(f"{STEP_LABEL[step].capitalize()}: settings and results")
                     params, results = _pack(part)
                     store.save_step(p, part, params, results, user)
+                    if part == "age_groups":
+                        g = _sample_age_groups()
+                        store.save_age_groups(p, [dict(row_number=i + 1, g=v) for i, v in enumerate(g)
+                                                  if v is not None], user)
                     if part == "clusters":
                         a, b = _sample_clusters()
                         if a is not None:
@@ -1429,7 +1467,7 @@ def restore(p, out):
     """Rebuild the session from a saved project."""
     d, steps, rows = out["dataset"], out["steps"], out["samples"]
     for k in list(S.keys()):
-        if k not in ("_user", "_sid", "_octa_auth"):
+        if k not in ("_user", "_sid", "_octa_auth", "module", "ex_src"):
             del S[k]
     cols = list(d.get("variables") or (steps.get("load", {}).get("params", {}).get("variables") or []))
     meas = pd.DataFrame([r.get("measured") or {} for r in rows]).reindex(columns=cols).astype(float)
@@ -1495,12 +1533,260 @@ def restore(p, out):
                          base=pp.get("reference_variables"), extra=pp.get("filled_variables"), k=pp.get("k"),
                          P=np.asarray(r["pca_scores"]), ev=np.asarray(r["pca_explained"]))
         saved["clusters"] = now
+    if "age_groups" in steps:
+        ap = steps["age_groups"]["params"]
+        t = pd.DataFrame(ap.get("table") or [], columns=agegroups.COLUMNS)
+        S.age_table, S.age_base = t, t.copy()
+        S.age_params = {k: v for k, v in ap.items() if k != "table"}
+        S.age_ver = S.get("age_ver", 0) + 1
+        saved["age_groups"] = now
     S.saved = saved
     S.changed = {}
     last = d.get("last_step")
-    S.step = STEPS[STEP_PAGES.get(last, 0)]
+    if not S.get("module"):
+        S.module = "explore" if "age_groups" in steps else "fill"
+    if S.module == "explore":
+        S.step = EX_STEPS[1] if S.meta.age_ma.notna().any() else EX_STEPS[2]
+    else:
+        S.step = STEPS[STEP_PAGES.get(last, 0)]
     S.resumed = d.get("title")
     st.query_params.update({"project": p["id"], "key": p["key"]})
+
+
+# ================================================================ IgneoSuite 2: modules
+MODULES = {"fill": "Fill gaps in a large dataset", "explore": "Plot and explore the data"}
+EX_STEPS = ["1 · Load data", "2 · Age groups", "3 · Plots and parameters", "4 · Save & share", "About"]
+
+
+def _goto(step):
+    S._goto = step
+
+
+def _sample_age_groups():
+    """Age group of every sample (None without an age), or None when no grouping was made."""
+    t = S.get("age_table")
+    if t is None or not len(t) or "meta" not in S:
+        return None
+    lab = agegroups.assign(S.meta.age_ma.values, t)
+    return [None if v == agegroups.NO_AGE else str(v) for v in lab]
+
+
+def choose_module(m):
+    S.module = m
+    S.step = (STEPS if m == "fill" else EX_STEPS)[0]
+    st.query_params["module"] = m
+
+
+def page_modules():
+    st.header("What would you like to do?")
+    st.write("IgneoSuite has two modules. Both start with the same step: load your data, check the sample "
+             "locations on a map and save it.")
+    a, b = st.columns(2)
+    with a.container(border=True):
+        st.markdown("### 🧩 Fill gaps in a large dataset")
+        st.write("Look at the missing values, test the gap-filling methods on your own data, fill the gaps with an "
+                 "error for every estimate, and check the structure of the data (geometry and clusters).")
+        st.button("Start gap-filling", type="primary", key="mod_fill", on_click=choose_module, args=("fill",),
+                  use_container_width=True)
+    with b.container(border=True):
+        st.markdown("### 📊 Plot and explore the data")
+        st.write("Plot the data and look at its statistics and geochemical parameters. Use a dataset you saved in "
+                 "IgneoSuite (for example after gap-filling), or upload a new file, small or large, complete or "
+                 "with gaps. Samples with ages can be grouped by age and shown on the map.")
+        st.button("Start exploring", type="primary", key="mod_explore", on_click=choose_module, args=("explore",),
+                  use_container_width=True)
+
+
+def _saved_lists():
+    """My projects / Shared with me, to open one (module 2a)."""
+    tok = _session_token()
+    if not store.enabled():
+        st.info("Saved datasets are not available in this installation. Upload a file instead.")
+        return
+    if not tok:
+        if S.get("_accounts"):
+            st.info("Log in to see your saved datasets and those shared with you.")
+        else:
+            code = st.text_input("Project code", placeholder="paste the code you got when you saved", key="ex_code")
+            if st.button("Open", key="ex_code_btn"):
+                p = store.parse_code(code)
+                st.error("That does not look like a project code.") if not p else open_project(p)
+        return
+    try:
+        mine, shared = store.my_projects(tok), store.shared_with_me(tok)
+    except Exception as e:
+        st.error(f"Your datasets could not be listed. {e}")
+        return
+    st.markdown("**My projects**")
+    if not mine:
+        st.caption("Nothing saved yet. Datasets you save while logged in appear here.")
+    for d in mine[:50]:
+        if _project_row(d, f"ex_mine_{d['id']}"):
+            open_project({"id": d["id"], "key": store.account_key(tok), "role": "owner"})
+    st.markdown("**Shared with me**")
+    if not shared:
+        st.caption("Datasets other IgneoSuite users share with you appear here.")
+    for d in shared[:50]:
+        who = d.get("owner") or d.get("owner_username") or "another user"
+        badge = "can edit" if d.get("role") == "edit" else "view only"
+        if _project_row(d, f"ex_shared_{d['id']}", f" · from {who} · {badge}"):
+            open_project({"id": d["id"], "key": store.account_key(tok), "role": d.get("role", "view"), "owner": who})
+
+
+def _next_after_load():
+    if "X" not in S:
+        return
+    st.divider()
+    if S.meta.age_ma.notna().any():
+        st.button("Next: step 2 · Age groups →", type="primary", on_click=_goto, args=(EX_STEPS[1],), key="ex_next1")
+    else:
+        st.info("This dataset has no ages, so the age grouping (step 2) is skipped.")
+        st.button("Next: step 3 · Plots and parameters →", type="primary", on_click=_goto, args=(EX_STEPS[2],),
+                  key="ex_next1")
+
+
+def page_explore_load():
+    st.header("Load data")
+    src = st.radio("Which data do you want to explore?", ["saved", "upload"], horizontal=True, key="ex_src",
+                   format_func={"saved": "A dataset saved in IgneoSuite", "upload": "Upload a new file"}.get)
+    if src == "saved":
+        st.caption("For example a dataset you filled in the gap-filling module. Filled values and their errors "
+                   "come with it.")
+        if "X" in S:
+            st.info(f"Open now: **{S.get('project_meta', {}).get('title', 'unsaved data')}**. "
+                    "Choose another one below to replace it.")
+        with st.expander("📂 Choose a saved dataset", expanded="X" not in S):
+            _saved_lists()
+        if "X" in S:
+            show_loaded()
+            save_bar("load")
+    else:
+        st.caption("The file has the same layout as in the gap-filling module: sample ID, latitude, longitude, "
+                   "age (optional), reference and comment (optional), then the elements and element ratios. It can "
+                   "be small or large, complete or with missing values.")
+        page_load(with_open=False, header=False)
+    _next_after_load()
+
+
+def _age_hist(age, lab, table, col):
+    import plotly.graph_objects as go
+    ok = np.isfinite(age)
+    fig = go.Figure()
+    order = list(table["Group"]) + [agegroups.OUTSIDE]
+    for g in order:
+        sel = ok & (lab == g)
+        if sel.any():
+            fig.add_trace(go.Histogram(x=age[sel], name=f"{g} ({int(sel.sum())})", marker_color=col.get(g, "#9a9893"),
+                                       nbinsx=60, opacity=0.9,
+                                       hovertemplate="%{x} Ma: %{y} samples<extra>" + g + "</extra>"))
+    fig.update_layout(barmode="stack", height=320, margin=dict(l=50, r=10, t=10, b=40), plot_bgcolor="#ffffff",
+                      xaxis=dict(title="Age (Ma)", gridcolor="#ecebe7"), yaxis=dict(title="Samples", gridcolor="#ecebe7"),
+                      legend=dict(font=dict(size=11), traceorder="normal"))
+    return fig
+
+
+def page_age():
+    _need("X", "Load data first (step 1).")
+    st.header("Age groups")
+    age = S.meta.age_ma.values.astype(float)
+    if not np.isfinite(age).any():
+        st.info("This dataset has no ages, so there is nothing to group. Continue with step 3.")
+        st.button("Next: step 3 · Plots and parameters →", type="primary", on_click=_goto, args=(EX_STEPS[2],))
+        return
+    sm = agegroups.stats(age)
+    st.subheader("Age statistics")
+    m = st.columns(6)
+    m[0].metric("With age", f"{sm['n_with_age']:,}")
+    m[1].metric("Without age", f"{sm['n_without_age']:,}")
+    m[2].metric("Youngest", f"{sm['min']:,.1f} Ma")
+    m[3].metric("Oldest", f"{sm['max']:,.1f} Ma")
+    m[4].metric("Median", f"{sm['median']:,.1f} Ma")
+    m[5].metric("Mean ± SD", f"{sm['mean']:,.0f} ± {sm['std']:,.0f}")
+    st.caption(f"Middle half of the ages: {sm['q25']:,.1f}–{sm['q75']:,.1f} Ma (25th–75th percentile).")
+
+    st.subheader("Group the samples by age")
+    ap = S.get("age_params", {})
+    methods = list(agegroups.METHODS)
+    c1, c2 = st.columns([2, 3])
+    method = c1.selectbox("Grouping", methods, format_func=agegroups.METHODS.get,
+                          index=methods.index(ap.get("method", "timescale")), key="age_method")
+    opts = {}
+    with c2:
+        if method == "timescale":
+            levels = list(agegroups.TIMESCALE)
+            opts["level"] = st.radio("Level of the time scale", levels, horizontal=True,
+                                     index=levels.index(ap.get("level", "Period")), key="age_level")
+            o1, o2 = st.columns(2)
+            opts["only_used"] = o1.checkbox("Only the intervals that contain samples", value=True, key="age_used")
+            opts["ics_colours"] = o2.checkbox("Official time-scale colours", value=bool(ap.get("ics_colours", False)),
+                                              key="age_ics", help="The ICS chart colours. Neighbouring intervals can "
+                                                                  "look alike on the map.")
+        elif method == "width":
+            opts["width"] = st.number_input("Interval width (Ma)", min_value=0.1, value=float(ap.get("width", 100.0)),
+                                            step=10.0, key="age_width")
+            opts["only_used"] = st.checkbox("Only the intervals that contain samples", value=True, key="age_used_w")
+        elif method == "count":
+            opts["n_groups"] = st.slider("Number of groups", 2, 12, int(ap.get("n_groups", 5)), key="age_n")
+        else:
+            opts["custom"] = st.text_input("Boundaries in Ma, separated by commas",
+                                           value=ap.get("custom", "0, 66, 252, 541, 1000, 2500"), key="age_custom",
+                                           help="For example 0, 66, 252, 541: groups 0–66, 66–252 and 252–541 Ma.")
+    fresh = S.get("age_table") is None
+    if st.button("Make the groups", type="primary" if fresh else "secondary", key="age_make") or fresh:
+        t = agegroups.propose(age, method, **opts)
+        if not len(t):
+            st.error("These settings give no groups. For your own boundaries, give at least two numbers.")
+            return
+        S.age_base, S.age_table = t, t.copy()
+        S.age_params = dict(method=method, **opts)
+        S.age_ver = S.get("age_ver", 0) + 1
+        _changed("age_groups")
+    st.markdown("**The groups** · rename them, change their limits or colours (hex code such as #2a78d6), "
+                "add rows at the bottom or delete rows. Ages from ‘From’ up to (not including) ‘To’ belong to a group.")
+    edited = st.data_editor(S.age_base, num_rows="dynamic", hide_index=True, use_container_width=True,
+                            key=f"age_editor_{S.get('age_ver', 0)}",
+                            column_config={"Group": st.column_config.TextColumn(max_chars=100, required=True),
+                                           "From (Ma)": st.column_config.NumberColumn(format="%.2f", min_value=0),
+                                           "To (Ma)": st.column_config.NumberColumn(format="%.2f", min_value=0),
+                                           "Colour": st.column_config.TextColumn(max_chars=7)})
+    table, problems = agegroups.clean(edited)
+    for p_ in problems:
+        st.warning(p_)
+    if not table.equals(S.age_table.reset_index(drop=True) if S.get("age_table") is not None else None):
+        S.age_table = table
+        _changed("age_groups")
+    if not len(table):
+        st.info("Add at least one group.")
+        return
+    lab = agegroups.assign(age, table)
+    col = agegroups.colours(table)
+    cnt = agegroups.counts(lab, table)
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        st.dataframe(cnt, hide_index=True, use_container_width=True)
+    with c2:
+        iplots.show(_age_hist(age, lab, table, col), "Age histogram by group", "fig_age_hist",
+                    data=pd.DataFrame({S.id_col: S.ids, "Age (Ma)": age, "Age group": lab}).set_index(S.id_col))
+    n_out = int((lab == agegroups.OUTSIDE).sum())
+    if n_out:
+        st.warning(f"{n_out} samples with an age fall outside every group. Widen the groups or add one.")
+    st.subheader("Map of the age groups")
+    order = list(table["Group"]) + [agegroups.OUTSIDE, agegroups.NO_AGE]
+    location_map("age_map", groups=lab, group_colours=col, group_order=order, ask=False)
+    save_bar("age_groups")
+    if S.get("saved", {}).get("age_groups"):
+        st.button("Next: step 3 · Plots and parameters →", type="primary", on_click=_goto, args=(EX_STEPS[2],),
+                  key="age_next")
+    else:
+        st.caption("Save the groups to keep them with your project, then continue with step 3.")
+        st.button("Continue to step 3 without saving →", on_click=_goto, args=(EX_STEPS[2],), key="age_next_nosave")
+
+
+def page_plots():
+    _need("X", "Load data first (step 1).")
+    st.header("Plots and parameters")
+    st.info("This step is being built: plots, statistics and geochemical parameters of your data. "
+            "Your data" + (" and age groups are" if S.get("age_table") is not None else " is") + " ready for it.")
 
 
 def page_about():
@@ -1549,6 +1835,8 @@ ADMIN_STEP = "🛡 Admin"
 PAGES = dict(zip(STEPS, [page_load, page_diagnose, page_validate, page_fill, page_geometry, page_cluster, page_save,
                          page_about]))
 
+
+EX_PAGES = dict(zip(EX_STEPS, [page_explore_load, page_age, page_plots, page_save, page_about]))
 
 SOURCE_URL = "https://github.com/OctaInsight/IgneoSuite"
 
@@ -1620,6 +1908,10 @@ def render(user=None, app=None):
     S["_user"] = user
     S["_accounts"] = app is not None
     telemetry.session_id()
+    if not S.get("module") and st.query_params.get("module") in MODULES:
+        S.module = st.query_params["module"]
+    if "_goto" in S:
+        S.step = S.pop("_goto")
     if "_pending_open" in S:
         p, out = S.pop("_pending_open")
         restore(p, out)
@@ -1640,12 +1932,34 @@ def render(user=None, app=None):
             S._resume_failed = True
             st.error(f"The saved project in this link could not be opened. {e}")
     collect_jobs()
+    if not S.get("module"):
+        with st.sidebar:
+            st.markdown(f"### IgneoSuite\n<span style='color:#52514e'>{APP_META['tagline']}</span>",
+                        unsafe_allow_html=True)
+            if app is not None:
+                st.divider()
+                from octa_auth import sidebar as account_box
+                account_box(app)
+            _sidebar_footer()
+        page_modules()
+        return
+    if st.query_params.get("module") != S.module:
+        st.query_params["module"] = S.module
     with st.sidebar:
         st.markdown(f"### IgneoSuite\n<span style='color:#52514e'>{APP_META['tagline']}</span>", unsafe_allow_html=True)
+        a, b = st.columns([3, 2], vertical_alignment="center")
+        a.markdown(f"<span style='font-size:.85rem;color:#52514e'>Module</span><br><b>{MODULES[S.module]}</b>",
+                   unsafe_allow_html=True)
+        if b.button("Change", key="mod_change", use_container_width=True):
+            S.module = None
+            if "module" in st.query_params:
+                del st.query_params["module"]
+            st.rerun()
         is_admin = bool(user) and isinstance(user, dict) and user.get("role") == "admin"
-        options = STEPS + ([ADMIN_STEP] if is_admin else [])
+        steps_now = STEPS if S.module == "fill" else EX_STEPS
+        options = steps_now + ([ADMIN_STEP] if is_admin else [])
         if S.get("step") not in options:
-            S.step = STEPS[0]
+            S.step = steps_now[0]
         step = st.radio("Steps", options, key="step", label_visibility="collapsed")
         if "X" in S:
             st.caption(f"{len(S.X):,} samples · {S.X.shape[1]} variables")
@@ -1661,4 +1975,5 @@ def render(user=None, app=None):
     if S.get("resumed"):
         st.success(f"Welcome back. The saved project **{S.pop('resumed')}** is open, with the results of every "
                    "saved step. You are at the last step you saved.")
-    (page_admin if step == ADMIN_STEP else PAGES[step])()
+    pages = PAGES if S.module == "fill" else EX_PAGES
+    (page_admin if step == ADMIN_STEP else pages[step])()

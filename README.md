@@ -10,6 +10,13 @@ works best, and gives every estimated value its own error. It implements the wor
 > Abu-Alam, T.S., Güzey, A., Khalil, T.T., Abu-Anber, M., Said, A., Abu-Alam, N.T., Ghoneim, M.
 > *When simpler wins: recovering the structure of incomplete geochemical data.* Computers & Geosciences (submitted).
 
+> **Version 2 (branch `v2`, in development).** After login the user chooses a module:
+> **1 · Fill gaps in a large dataset** (version 1, unchanged) or **2 · Plot and explore the data**.
+> Module 2 uses a saved dataset or a new file (same template), the same step 1 (map, location check, save),
+> then **step 2 · Age groups**: age statistics, grouping by the ICS time scale, equal intervals, equal counts
+> or the user's own boundaries; editable names, limits and colours; a map coloured by group; groups saved
+> per sample. Samples without ages skip to step 3 (plots and parameters, next).
+
 ## What it does
 
 1. **Load data** – download the Excel template, or upload your own CSV or Excel file (one sample per row).

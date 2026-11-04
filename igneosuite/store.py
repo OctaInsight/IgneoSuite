@@ -214,6 +214,13 @@ def save_clusters(p, labels: list[dict], user=None):
                                           "p_first": k == 0}, user)
 
 
+def save_age_groups(p, groups: list[dict], user=None):
+    """groups: [{"row_number", "g" (group name)}]. Clears every sample's group first."""
+    for k in range(0, max(len(groups), 1), 5000):
+        _rpc("igneosuite_save_age_groups", {"p_id": p["id"], "p_key": p["key"], "p_rows": groups[k:k + 5000],
+                                            "p_first": k == 0}, user)
+
+
 def save_step(p, step: str, params: dict, results: dict, user=None):
     _rpc("igneosuite_save_step", {"p_id": p["id"], "p_key": p["key"], "p_step": step, "p_params": params,
                                   "p_results": results, "p_app_version": __version__}, user)
