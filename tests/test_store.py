@@ -109,7 +109,7 @@ def test_save_and_reopen(tmp_path):
     at.sidebar.radio[0].set_value("6 · Clusters").run()
     next(b for b in at.button if b.label == "Run comparison").click().run()
     assert not at.exception, at.exception
-    assert any(b.label == "⬇ All data and clusters (Excel)" for b in at.get("download_button"))
+    assert any(b.label == "⬇ Download all data and clusters (Excel)" for b in at.get("download_button"))
     at.button(key="save_clusters").click().run()
     assert not at.exception, at.exception
     clu = at.session_state["clu"]

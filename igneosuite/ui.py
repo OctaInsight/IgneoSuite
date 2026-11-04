@@ -745,14 +745,10 @@ def page_cluster():
             "Computers & Geosciences (submitted).",
         ]
         sheets = {"Samples": full, "Cluster_comparison": ct}
-        c1, c2 = st.columns(2)
-        c1.download_button("⬇ All data and clusters (Excel)", export.to_excel(sheets, notes),
+        st.download_button("⬇ Download all data and clusters (Excel)", export.to_excel(sheets, notes),
                            "igneosuite_clusters_full.xlsx",
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary",
                            key="clu_full_xlsx", on_click=telemetry.event, args=("export", {"format": "clusters_xlsx"}, _user()))
-        out = pd.DataFrame({S.id_col: np.asarray(S.ids)[c["rows"]], "Reference cluster": c["lr"], "Gap-filled cluster": c["lf"]})
-        c2.download_button("Cluster labels only (CSV)", out.to_csv(index=False).encode(), "igneosuite_clusters.csv",
-                           "text/csv", key="clu_csv")
         st.caption("The Excel file has one row per sample: ID, latitude, longitude, age, reference, comment, the "
                    "cluster before and after filling, and for every element the measured value, the estimate, its "
                    f"± error and its {band}% range. Saving this step stores all of it in your project.")
