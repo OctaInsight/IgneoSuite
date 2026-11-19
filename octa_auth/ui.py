@@ -422,6 +422,9 @@ def _forgot_form(app: App):
     except client.OctaError as e:
         st.error(str(e))
         return
+    except mail.MailError as e:
+        st.error(f"The email could not be sent. {e} If this keeps happening, please contact octainsight@gmail.com.")
+        return
     except Exception:
         st.error("The email could not be sent. Please try again later or contact octainsight@gmail.com.")
         return
