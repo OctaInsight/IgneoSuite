@@ -81,3 +81,32 @@ def test_gmail_only_as_fallback(secrets):
     assert mail.provider() == "gmail"
     secrets.update(resend_api_key="re_x")          # a key without a sender address is not enough
     assert mail.provider() == "gmail"
+
+
+class FakeSecrets(dict):
+    """Stands in for st.secrets: a mapping of sections and top-level values."""
+
+
+@pytest.fixture
+def raw_secrets(monkeypatch):
+    box = FakeSecrets()
+    monkeypatch.setattr(mail.st, "secrets", box)
+    return box
+
+
+def test_names_are_forgiving(raw_secrets):
+    raw_secrets["email"] = {"RESEND_API_KEY": "re_x", "From_Email": " accounts@example.org "}
+    assert mail.provider() == "resend" and mail.sender()["from_email"] == "accounts@example.org"
+    raw_secrets.clear()
+    raw_secrets.update(RESEND_API_KEY="re_x", RESEND_FROM_EMAIL="m@example.org")      # matchmaking style
+    assert mail.provider() == "resend"
+
+
+def test_diagnose_names_what_is_missing(raw_secrets):
+    raw_secrets.update(octa_users={"url": "u"})
+    assert "no [email] section" in mail.diagnose() and "octa_users" in mail.diagnose()
+    raw_secrets["email"] = {"resend_api_key": "re_secret", "from_name": "Octa"}
+    d = mail.diagnose()
+    assert "missing from_email" in d and "resend_api_key" in d and "re_secret" not in d
+    raw_secrets["email"]["from_email"] = "a@example.org"
+    assert mail.diagnose() == "Resend is set up."

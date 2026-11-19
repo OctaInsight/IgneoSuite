@@ -15,7 +15,8 @@ Streamlit secrets:
     # user = "<gmail address>"
     # app_password = "abcd efgh ijkl mnop"
 
-The Resend free plan allows 100 emails a day and 3,000 a month for the whole Resend account (shared with the
+Key names are read case-insensitively, and the matchmaking platform's top-level RESEND_API_KEY and
+RESEND_FROM_EMAIL are accepted too. The Resend free plan allows 100 emails a day and 3,000 a month for the whole Resend account (shared with the
 matchmaking platform).
 """
 from __future__ import annotations
@@ -36,11 +37,73 @@ class MailError(RuntimeError):
     """The email could not be sent; the message says why (never contains a key)."""
 
 
-def _cfg() -> dict:
+_KEY_NAMES = ("resend_api_key", "resend_key", "api_key")
+_FROM_NAMES = ("from_email", "resend_from_email", "from", "sender")
+
+
+def _section() -> dict:
+    """The [email] section of the secrets with lower-case key names ({} if there is none)."""
     try:
-        return dict(st.secrets["email"])
+        sec = st.secrets.get("email") or {}
+        return {str(k).strip().lower(): v for k, v in dict(sec).items()}
     except Exception:
         return {}
+
+
+def _top(name: str):
+    """A top-level secret, as the matchmaking platform writes them (RESEND_API_KEY, RESEND_FROM_EMAIL)."""
+    try:
+        for k in st.secrets.keys():
+            if str(k).strip().lower() == name:
+                v = st.secrets[k]
+                return v if isinstance(v, str) else None
+    except Exception:
+        pass
+    return None
+
+
+def _first(c: dict, names) -> str:
+    for n in names:
+        v = c.get(n)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _cfg() -> dict:
+    """Email settings. The [email] section is read case-insensitively; the matchmaking platform's top-level
+    RESEND_API_KEY / RESEND_FROM_EMAIL also work."""
+    c = _section()
+    c["resend_api_key"] = _first(c, _KEY_NAMES) or (_top("resend_api_key") or "").strip()
+    c["from_email"] = _first(c, _FROM_NAMES) or (_top("resend_from_email") or "").strip()
+    return c
+
+
+def sender() -> dict:
+    """The sender shown on admin pages: from_name, from_email, reply_to (no key)."""
+    c = _cfg()
+    return {"from_name": c.get("from_name") or "Octa Insight", "from_email": c.get("from_email") or c.get("user") or "",
+            "reply_to": c.get("reply_to") or ""}
+
+
+def diagnose() -> str:
+    """Why email is not set up, naming the settings found (never their values)."""
+    try:
+        has_email = any(str(k).strip().lower() == "email" for k in st.secrets.keys())
+        top = sorted(str(k) for k in st.secrets.keys())
+    except Exception:
+        return "The app could not read its Streamlit secrets."
+    c = _cfg()
+    missing = [n for n, v in (("resend_api_key", c.get("resend_api_key")), ("from_email", c.get("from_email"))) if not v]
+    if not missing:
+        return "Resend is set up."
+    if not has_email:
+        return (f"There is no [email] section in the secrets (sections and settings found: {', '.join(top) or 'none'}). "
+                f"Missing: {', '.join(missing)}.")
+    found = sorted(k for k in _section())
+    return (f"The [email] section is missing {' and '.join(missing)} "
+            f"(settings found in it: {', '.join(found) or 'none'}). Names must be written exactly like this, "
+            "each on its own line under [email], with the value in double quotes.")
 
 
 def provider() -> str | None:
@@ -90,7 +153,10 @@ def send(to: str, subject: str, paragraphs: list[str], button: tuple[str, str] |
 
 
 def _send_resend(c: dict, to: str, subject: str, text: str, body: str) -> str:
-    payload = {"from": formataddr((c.get("from_name", "Octa Insight"), c["from_email"])),
+    sender = c["from_email"]
+    if "<" not in sender:                       # "Name <address>" is used as it is
+        sender = formataddr((c.get("from_name", "Octa Insight"), sender))
+    payload = {"from": sender,
                "to": [to], "subject": subject, "text": text, "html": body}
     if c.get("reply_to"):
         payload["reply_to"] = c["reply_to"]
