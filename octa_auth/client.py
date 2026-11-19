@@ -98,8 +98,18 @@ def change_password(token, old, new):
     return rpc("octa_user_change_password", p_token=token, p_old=old, p_new=new)
 
 
+def server_key() -> str:
+    """The server key from the secrets, without spaces or line breaks copied around it."""
+    return "".join(str(setting("server_key", "") or "").split())
+
+
+def server_key_looks_unset() -> bool:
+    k = server_key()
+    return not k or "<" in k or "PASTE" in k.upper() or "server key" in k.lower()
+
+
 def reset_request(email, app):
-    return rpc("octa_user_reset_request", p_server_key=setting("server_key", ""), p_email=email, p_app=app)
+    return rpc("octa_user_reset_request", p_server_key=server_key(), p_email=email, p_app=app)
 
 
 def reset_check(token):

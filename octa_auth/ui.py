@@ -391,8 +391,11 @@ def _forgot_form(app: App):
     if not _EMAIL.match(email):
         st.error("Please enter a valid email address.")
         return
-    if not mail.enabled() or not client.setting("server_key"):
-        st.error("Password reset by email is not set up for this app yet. Please contact octainsight@gmail.com.")
+    if not mail.enabled() or client.server_key_looks_unset():
+        missing = (["the [email] settings"] if not mail.enabled() else []) + \
+                  (["the server_key in [octa_users]"] if client.server_key_looks_unset() else [])
+        st.error(f"Password reset by email is not set up for this app yet ({' and '.join(missing)} missing in its "
+                 "Streamlit secrets). Please contact octainsight@gmail.com.")
         return
     base = _base_url(app)
     try:
@@ -400,7 +403,9 @@ def _forgot_form(app: App):
             r = client.reset_request(email, _app_id(app) or "")
             if not r.get("ok"):
                 st.error(r.get("error", "The request failed.") if r.get("error") != "not allowed" else
-                         "Password reset is not set up correctly for this app (server key).")
+                         "Password reset is not set up correctly for this app: the server_key in its Streamlit "
+                         "secrets is not the same as the Octa suite's. Copy it exactly from the Octa suite app's "
+                         "secrets ([octa_users] server_key).")
                 return
             if r.get("exists"):
                 link = f"{base}?reset={r['token']}"
